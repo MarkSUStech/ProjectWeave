@@ -1,7 +1,7 @@
 import Editor from '@monaco-editor/react'
 import { useEffect } from 'react'
 import { configureMonaco } from '../../lib/monaco'
-import { isRunnablePath, isTestPath } from '../../lib/runner/runFile'
+import { isAnyTestPath, canRunPath } from '../../lib/runner/runRemote'
 import { Button } from '../ui/Button'
 import { PlaceholderState } from '../ui/PlaceholderState'
 import { FileCode2 } from 'lucide-react'
@@ -59,8 +59,8 @@ export function EditorPanel({
     configureMonaco()
   }, [])
 
-  const canRun = openPath !== null && isRunnablePath(openPath) && !running
-  const isTestFile = openPath !== null && isTestPath(openPath)
+  const canRun = openPath !== null && canRunPath(openPath) && !running
+  const isTest = openPath !== null && isAnyTestPath(openPath)
 
   // Ctrl/Cmd + S 保存；Ctrl/Cmd + Enter 运行/运行测试（覆盖浏览器默认行为）
   useEffect(() => {
@@ -103,14 +103,14 @@ export function EditorPanel({
             title={
               openPath === null
                 ? '未打开文件'
-                : isTestPath(openPath)
-                  ? '在浏览器 Worker 沙箱中运行项目全部测试（Ctrl+Enter）'
-                  : isRunnablePath(openPath)
-                    ? '在浏览器 Worker 沙箱中运行当前编辑内容（Ctrl+Enter）'
-                    : '浏览器运行器仅支持 .js / .ts 文件'
+                : isAnyTestPath(openPath)
+                  ? '运行项目全部测试（TS 浏览器沙箱 / Python 远程沙箱，Ctrl+Enter）'
+                  : canRunPath(openPath)
+                    ? '运行当前编辑内容（TS 浏览器沙箱 / Python 远程沙箱，Ctrl+Enter）'
+                    : '当前文件类型不可执行'
             }
           >
-            {running ? '运行中…' : isTestFile ? '▶ 测试' : '▶ 运行'}
+            {running ? '运行中…' : isTest ? '▶ 测试' : '▶ 运行'}
           </Button>
           <Button
             size="sm"

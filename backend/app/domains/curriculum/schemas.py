@@ -59,10 +59,13 @@ class EvaluationFileResult(APIModel):
 
 
 class EvaluationSuiteInput(APIModel):
-    """浏览器测试套件结果（由前端运行器采集后提交）。"""
+    """测试套件结果（由前端运行器采集后提交；浏览器或远程沙箱均可）。"""
 
     files: list[EvaluationFileResult] = Field(default_factory=list)
     traceId: str | None = Field(default=None, max_length=64)
+    # 执行来源与远程执行会话（P4.2b：python 经服务端沙箱执行时的溯源）。
+    source: str = Field(default="browser", pattern="^(browser|remote)$")
+    executionId: str | None = Field(default=None, max_length=64)
     # 兼容 P3.5 旧字段（渐进迁移，任务级评估优先用 files）
     totalFiles: int = Field(default=0, ge=0)
     totalPassed: int = Field(default=0, ge=0)

@@ -119,7 +119,12 @@ def evaluate_task(
     append_event(
         db,
         event_id=server_event_id(
-            "task-evaluated", str(task.project_id), task.task_id, task.status, payload.traceId or ""
+            "task-evaluated",
+            str(task.project_id),
+            task.task_id,
+            task.status,
+            payload.traceId or "",
+            payload.executionId or "",
         ),
         type="task-evaluated",
         occurred_at=datetime.now(timezone.utc),
@@ -129,6 +134,8 @@ def evaluate_task(
             "taskId": task.task_id,
             "passed": passed,
             "trustLevel": "practice",
+            "source": payload.source,
+            "executionId": payload.executionId,
             "scopedFiles": [f.path for f in payload.files],
             "totalFailed": sum(f.failed for f in payload.files),
             "warnings": warnings,

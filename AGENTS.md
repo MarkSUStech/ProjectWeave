@@ -27,6 +27,11 @@ backend/    FastAPI + SQLAlchemy + Alembic（Python 3.10+）
       events/   models / service / router（学习事件信封，幂等 + 白名单）
       tutor/    models / service / router（教学回合 + Policy Gate + H4 门控 + 主动建议）
       settings/ models / service / router（AI 介入模式偏好）
+      executions/ models / schemas / router（远程执行会话 API，P4.2b）
+                service（生命周期编排 + 校验 + 资源上限）
+                sandbox/（SandboxManager 协议 + Docker 一次性容器）
+                languages/（LanguageRunner 协议 + PythonRunner + python_driver）
+  sandbox/     沙箱镜像 Dockerfile 与说明（python/ = CPython 3.12 + pytest）
   app/ai/     LLM Provider Adapter（deepseek 真实 / mock 仅测试 / disabled）
   migrations/   Alembic
   tests/        pytest
@@ -74,6 +79,15 @@ PW_TEST_DATABASE_URL=postgresql+psycopg2://projectweave:projectweave@localhost:5
 ```
 
 套件默认 skip；会自动创建并清理 `projectweave_pytest` 库。
+
+# 远程执行沙箱（P4.2b，Python 需要）
+
+```bash
+docker build -t projectweave-sandbox-python:3.12 sandbox/python   # 一次性构建镜像
+PW_SANDBOX_E2E=1 .venv/Scripts/python.exe -m pytest tests/test_executions_docker_e2e.py -v  # 真实 Docker 验收（默认 skip）
+```
+
+无 Docker/镜像时创建执行返回 503（明确报错，不伪造）。隔离参数与配置见 `sandbox/README.md`。
 
 ## 4. 开发流程（严格增量迭代）
 

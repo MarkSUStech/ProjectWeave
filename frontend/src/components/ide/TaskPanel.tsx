@@ -51,15 +51,20 @@ export function TaskPanel({
     try {
       const results = await onRunTaskTests(currentTask.testFiles)
       setTestResults(results)
-      const traceId = useRunStore.getState().trace?.traceId ?? null
+      const trace = useRunStore.getState().trace
       const files: EvaluationFileResult[] = results.map((r) => ({
         path: r.path,
         status: r.status,
         passed: r.cases.filter((c) => c.status === 'passed').length,
-        failed: r.cases.filter((c) => c.status === 'failed').length,
+        failed: r.cases.filter((c) => c.status !== 'passed').length,
         totalCases: r.cases.length,
       }))
-      const result = await evaluateTask(projectId, currentTask.taskId, { files, traceId })
+      const result = await evaluateTask(projectId, currentTask.taskId, {
+        files,
+        traceId: trace?.traceId ?? null,
+        source: trace?.backend === 'remote-pytest' ? 'remote' : 'browser',
+        executionId: trace?.executionId ?? null,
+      })
       setEvaluation(result)
     } catch (err) {
       setError(err instanceof Error ? err.message : '任务测试运行失败')

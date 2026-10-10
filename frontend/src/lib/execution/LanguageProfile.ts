@@ -33,8 +33,8 @@ export const typescriptProfile: LanguageProfile = {
 }
 
 /**
- * Python Profile（P4.2a 仅定义元数据，不伪造运行能力）。
- * 支持后端为空 → registry 会返回"不支持"错误。
+ * Python Profile（P4.2b 起由 remote-pytest 后端真实支持：
+ * 服务端 Docker 沙箱 CPython 3.12 + pytest）。
  */
 export const pythonProfile: LanguageProfile = {
   languageId: 'python',
@@ -42,7 +42,7 @@ export const pythonProfile: LanguageProfile = {
   sourceExtensions: ['py'],
   testFilePattern: /_test\.py$|test_.*\.py$/,
   moduleSystem: 'python-import',
-  supportedBackends: [], // 待 remote-pytest 后端实现
+  supportedBackends: ['remote-pytest'],
   commentPrefix: '#',
 }
 

@@ -21,3 +21,5 @@ export { registerBackend, getBackend, selectBackend, execute, UnsupportedExecuti
 
 // 注册 TypeScript 浏览器后端（副作用导入）
 import './backends/browserWorker'
+// 注册 Python 远程沙箱后端（P4.2b，真实执行）
+import './backends/remotePython'

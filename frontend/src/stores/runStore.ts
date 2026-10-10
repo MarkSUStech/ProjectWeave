@@ -22,6 +22,10 @@ export interface RunTrace {
   fingerprint: string
   runPath: string | null
   at: string
+  /** 远程执行的会话 id（P4.2b，验收/事件溯源；浏览器运行为 null）。 */
+  executionId?: string | null
+  /** 执行后端（browser-worker / remote-pytest）。 */
+  backend?: string | null
 }
 
 interface RunStoreState {
@@ -30,11 +34,17 @@ interface RunStoreState {
   running: boolean
   trace: RunTrace | null
   activeTab: BottomTab
+  /** 远程执行的标准输入（用户在终端面板填写，随下次运行提交）。 */
+  stdin: string
+  /** 当前活动远程执行会话 id（取消按钮可见性判断）。 */
+  activeExecutionId: string | null
   appendEntry: (kind: 'system' | ConsoleLevel, text: string) => void
   appendObservation: (name: string, value: string) => void
   setRunning: (running: boolean) => void
   setTrace: (trace: RunTrace) => void
   setActiveTab: (tab: BottomTab) => void
+  setStdin: (stdin: string) => void
+  setActiveExecutionId: (id: string | null) => void
   clear: () => void
 }
 
@@ -44,6 +54,8 @@ export const useRunStore = create<RunStoreState>((set) => ({
   running: false,
   trace: null,
   activeTab: 'terminal',
+  stdin: '',
+  activeExecutionId: null,
   appendEntry: (kind, text) =>
     set((state) => {
       const entry: TerminalEntry = { id: nextEntryId++, kind, text, at: new Date().toISOString() }
@@ -69,5 +81,7 @@ export const useRunStore = create<RunStoreState>((set) => ({
   setRunning: (running) => set({ running }),
   setTrace: (trace) => set({ trace }),
   setActiveTab: (activeTab) => set({ activeTab }),
+  setStdin: (stdin) => set({ stdin }),
+  setActiveExecutionId: (activeExecutionId) => set({ activeExecutionId }),
   clear: () => set({ entries: [], observations: [], trace: null }),
 }))

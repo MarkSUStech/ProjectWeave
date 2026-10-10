@@ -8,6 +8,7 @@ from app.domains.concepts.router import router as concepts_router
 from app.domains.curriculum.router import router as curriculum_router
 from app.domains.curriculum.router import tasks_scoped as curriculum_tasks_router
 from app.domains.events.router import router as events_router
+from app.domains.executions.router import router as executions_router
 from app.domains.learner.router import router as learner_router
 from app.domains.settings.router import router as settings_router
 from app.domains.tutor.router import router as tutor_router
@@ -28,6 +29,7 @@ api_router.include_router(learner_router)
 api_router.include_router(curriculum_router)
 api_router.include_router(curriculum_tasks_router)
 api_router.include_router(events_router)
+api_router.include_router(executions_router)
 api_router.include_router(tutor_router)
 api_router.include_router(settings_router)
 

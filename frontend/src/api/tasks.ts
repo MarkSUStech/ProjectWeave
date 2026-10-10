@@ -26,6 +26,10 @@ export interface EvaluationFileResult {
 export interface EvaluationSuiteInput {
   files: EvaluationFileResult[]
   traceId?: string | null
+  /** 执行来源：browser（浏览器 Worker）/ remote（服务端沙箱，P4.2b）。 */
+  source?: 'browser' | 'remote'
+  /** 远程执行会话 id（source=remote 时的溯源）。 */
+  executionId?: string | null
 }
 
 export async function evaluateTask(

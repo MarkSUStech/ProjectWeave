@@ -21,7 +21,8 @@ import { useProjectFiles } from '../hooks/useProjectFiles'
 import { useFileHistory } from '../hooks/useFileHistory'
 import { runFileInTerminal } from '../lib/runner/runToTerminal'
 import { runTestSuite } from '../lib/runner/runTestSuite'
-import { isTestPath } from '../lib/runner/runFile'
+import { runRemoteInTerminal, runRemoteTestsInTerminal, canRunPath, isAnyTestPath } from '../lib/runner/runRemote'
+import { detectLanguage, isTestFile } from '../lib/execution/LanguageProfile'
 import { trackClientEvent } from '../lib/eventTracker'
 import { fetchSuggestion } from '../api/tutor'
 import type { TutorDecision } from '../types/tutor'
@@ -36,7 +37,6 @@ import type { PlanTask } from '../types/plan'
 import type { TestFileResult } from '../types/runner'
 import { getPlan } from '../api/plans'
 import { readFile } from '../api/files'
-import { isRunnablePath } from '../lib/runner/runFile'
 import { AnimatePresence, motion } from 'motion/react'
 import { useUiReducedMotion } from '../hooks/useUiReducedMotion'
 import { formatDateTime } from '../lib/labels'
@@ -130,27 +130,33 @@ function IdeWorkspace({ project }: { project: Project }) {
   }, [loadPlanTasks])
 
   // 任务测试运行：通过统一执行层（P4.2a 语言无关架构）。
-  // 构建 VFS → execute() → 路由到 browser-worker 后端 → 跨文件 import 解析。
+  // 构建 VFS → execute() → 按语言路由（TS → browser-worker / Python → remote-pytest）。
+  const buildProjectVfs = useCallback(async (): Promise<Map<string, string> | null> => {
+    const vfs = new Map<string, string>()
+    if (!files) return null
+    for (const file of files) {
+      try {
+        const content = openPath === file.path ? draftContent : (await readFile(project.id, file.path)).content
+        vfs.set(file.path, content)
+      } catch { /* 文件读取失败不阻塞其他文件 */ }
+    }
+    return vfs
+  }, [project.id, openPath, draftContent, files])
+
   const runTaskTests = useCallback(
     async (testPaths: string[]): Promise<TestFileResult[]> => {
-      // 构建 VFS：全部项目文件（当前草稿优先于服务器内容）
-      const vfs = new Map<string, string>()
-      if (files) {
-        for (const file of files) {
-          try {
-            const content = openPath === file.path ? draftContent : (await readFile(project.id, file.path)).content
-            vfs.set(file.path, content)
-          } catch { /* 文件读取失败不阻塞其他文件 */ }
-        }
-      }
+      const vfs = await buildProjectVfs()
+      if (!vfs) return []
 
-      const { execute, UnsupportedExecutionError } = await import('../lib/execution')
+      const { execute, UnsupportedExecutionError, detectLanguage } = await import('../lib/execution')
+      const languageId = detectLanguage(testPaths[0] ?? '') ?? 'typescript'
       try {
         const result = await execute({
           mode: 'test',
           testPaths,
           files: vfs,
-          languageId: 'typescript',
+          languageId,
+          stdin: languageId === 'python' ? useRunStore.getState().stdin || undefined : undefined,
         })
         // 输出到终端（构建信息 + 测试输出）
         if (result.buildTimeMs > 0) {
@@ -181,7 +187,7 @@ function IdeWorkspace({ project }: { project: Project }) {
         }))
       }
     },
-    [project.id, openPath, draftContent, files],
+    [buildProjectVfs],
   )
 
   const handleRestoreSnapshot = useCallback(
@@ -229,6 +235,50 @@ function IdeWorkspace({ project }: { project: Project }) {
 
   const handleRunTests = useCallback(async () => {
     if (!files) return
+    // Python 项目：测试文件走远程沙箱（P4.2b）；TS 项目维持浏览器套件。
+    const pythonTests = files.filter((f) => detectLanguage(f.path) === 'python' && isTestFile(f.path, 'python'))
+    if (pythonTests.length > 0) {
+      layout?.reveal('tests')
+      useTestStore.getState().setRunning(true)
+      useTestStore.getState().resetResults(pythonTests.length)
+      try {
+        const outcome = await runRemoteTestsInTerminal(
+          pythonTests.map((f) => f.path),
+          (await buildProjectVfs()) ?? new Map(),
+          { projectId: project.id },
+        )
+        // trace 里的逐文件结果写回测试面板
+        const { getExecution } = await import('../api/executions')
+        if (outcome.executionId) {
+          const snap = await getExecution(outcome.executionId)
+          for (const file of snap.testResults ?? []) {
+            useTestStore.getState().appendFileResult({
+              path: file.path,
+              status: file.status,
+              error: file.error ?? undefined,
+              cases: file.cases.map((c) => ({
+                name: c.name,
+                status: c.status === 'passed' ? ('passed' as const) : ('failed' as const),
+                error: c.error ?? undefined,
+                durationMs: c.durationMs,
+              })),
+            })
+          }
+        }
+        const results = useTestStore.getState().results
+        const totalCases = results.reduce((sum, f) => sum + f.cases.length, 0)
+        const failed = results.reduce((sum, f) => sum + f.cases.filter((c) => c.status !== 'passed').length, 0)
+        trackClientEvent(
+          'tests-run',
+          { files: pythonTests.length, passed: totalCases - failed, failed, traceId: outcome.traceId, language: 'python' },
+          { projectId: project.id },
+        )
+        void maybeFetchSuggestion(failed > 0)
+      } finally {
+        useTestStore.getState().setRunning(false)
+      }
+      return
+    }
     layout?.reveal('tests')
     const summary = await runTestSuite(project.id, files, {
       currentDraft: openPath ? { path: openPath, content: draftContent } : undefined,
@@ -240,13 +290,35 @@ function IdeWorkspace({ project }: { project: Project }) {
       { projectId: project.id },
     )
     void maybeFetchSuggestion(summary.totalFailed > 0 || summary.errorFiles > 0)
-  }, [project.id, files, openPath, draftContent, maybeFetchSuggestion, layout])
+  }, [project.id, files, openPath, draftContent, maybeFetchSuggestion, layout, buildProjectVfs])
 
   const handleRun = useCallback(() => {
     if (!openPath || !files) return
     // 测试文件：运行项目全部测试（当前文件草稿优先）；普通文件：运行当前内容。
-    if (isTestPath(openPath)) {
+    if (isAnyTestPath(openPath)) {
       void handleRunTests()
+      return
+    }
+    // Python 文件：远程沙箱执行（P4.2b）；测试文件（test_*.py）走远程 pytest。
+    if (detectLanguage(openPath) === 'python') {
+      const isPyTest = isTestFile(openPath, 'python')
+      const startedAt = Date.now()
+      layout?.reveal('terminal')
+      void buildProjectVfs().then((vfs) => {
+        if (!vfs) {
+          useRunStore.getState().appendEntry('error', '✘ 无法读取项目文件（VFS 构建失败）')
+          return { status: 'error' as const, traceId: null, executionId: null, exitCode: null, ok: false }
+        }
+        const options = { projectId: project.id }
+        return isPyTest ? runRemoteTestsInTerminal([openPath], vfs, options) : runRemoteInTerminal(openPath, vfs, options)
+      }).then((outcome) => {
+        trackClientEvent(
+          isPyTest ? 'tests-run' : 'code-run',
+          { path: openPath, status: outcome.status, durationMs: Date.now() - startedAt, traceId: outcome.traceId, language: 'python' },
+          { projectId: project.id },
+        )
+        void maybeFetchSuggestion(outcome.status !== 'ok')
+      })
       return
     }
     const startedAt = Date.now()
@@ -255,7 +327,7 @@ function IdeWorkspace({ project }: { project: Project }) {
       trackClientEvent('code-run', { path: openPath, status, durationMs: Date.now() - startedAt, traceId }, { projectId: project.id })
       void maybeFetchSuggestion(status !== 'ok')
     })
-  }, [project.id, openPath, draftContent, files, handleRunTests, maybeFetchSuggestion, layout])
+  }, [project.id, openPath, draftContent, files, handleRunTests, maybeFetchSuggestion, layout, buildProjectVfs])
 
   // §14.3 过期判定：草稿指纹与最近一次"单文件运行"的指纹不一致 → 画布标记过期。
   // （测试套件 trace 的 runPath 为 null，不参与单文件比对。）
@@ -332,7 +404,7 @@ function IdeWorkspace({ project }: { project: Project }) {
   return <div className="flex h-screen min-w-[960px] flex-col overflow-hidden bg-app">
     <IdeTopBar project={project} commands={<><CommandPalette files={files} onOpenFile={handleOpenFile}
       onSave={() => void save()} onRun={handleRun} canSave={!!openPath && dirty && !saving}
-      canRun={!!openPath && isRunnablePath(openPath) && !running && !testsRunning} /><WorkspaceViewMenu /></>} />
+      canRun={!!openPath && canRunPath(openPath) && !running && !testsRunning} /><WorkspaceViewMenu /></>} />
     <WorkspaceNoticeStrip projectId={project.id} onApplyPatch={applyPatch} />
     <div className="min-h-0 flex-1">
       <WorkspaceLayout mode={mode} projectId={project.id} panels={{

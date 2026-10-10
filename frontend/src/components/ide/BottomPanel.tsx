@@ -102,20 +102,64 @@ export function EventsView({ projectId }: { projectId: string }) {
 export function TerminalView() {
   const running = useRunStore((state) => state.running)
   const clear = useRunStore((state) => state.clear)
+  const stdin = useRunStore((state) => state.stdin)
+  const setStdin = useRunStore((state) => state.setStdin)
+  const activeExecutionId = useRunStore((state) => state.activeExecutionId)
+  const backend = useRunStore((state) => state.trace?.backend)
+  const [stopping, setStopping] = useState(false)
+
+  const handleStop = async () => {
+    setStopping(true)
+    try {
+      const { stopRemoteExecution } = await import('../../lib/runner/runRemote')
+      await stopRemoteExecution()
+    } finally {
+      setStopping(false)
+    }
+  }
+
+  const engineLabel =
+    backend === 'remote-pytest' ? '远程沙箱（Python 3.12）' : '浏览器 Worker 输出 · 远程 Shell 未连接（P4 未实现）'
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center justify-between border-b border-edge-soft px-3 py-1">
-        <span className="text-[11px] text-ink-faint">
-          浏览器 Worker 输出 · 远程 Shell 未连接（P4 未实现）
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge-soft px-3 py-1">
+        <span className="min-w-0 truncate text-[11px] text-ink-faint">
+          {engineLabel}
           {running && <span className="ml-2 text-accent">● 运行中</span>}
         </span>
-        <button
-          type="button"
-          onClick={clear}
-          className="rounded px-1.5 py-0.5 text-[11px] text-ink-faint hover:text-ink"
-        >
-          清空
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {running && activeExecutionId && (
+            <button
+              type="button"
+              onClick={() => void handleStop()}
+              disabled={stopping}
+              className="rounded border border-danger/40 px-1.5 py-0.5 text-[11px] text-danger hover:bg-danger/10"
+            >
+              {stopping ? '停止中…' : '■ 停止'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={clear}
+            className="rounded px-1.5 py-0.5 text-[11px] text-ink-faint hover:text-ink"
+          >
+            清空
+          </button>
+        </div>
+      </div>
+      {/* stdin：随下次远程运行提交（input() 读取） */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-edge-soft bg-panel px-3 py-1">
+        <label htmlFor="pw-stdin" className="shrink-0 text-[11px] text-ink-faint">
+          stdin
+        </label>
+        <input
+          id="pw-stdin"
+          type="text"
+          value={stdin}
+          onChange={(event) => setStdin(event.target.value)}
+          placeholder="远程运行的输入（按行输入，Enter 不发送——随运行一次性提交）"
+          className="min-w-0 flex-1 rounded border border-edge-soft bg-app px-2 py-1 font-mono text-[11px] text-ink placeholder:text-ink-faint/60"
+        />
       </div>
       <div className="min-h-0 flex-1 bg-app">
         <Suspense fallback={<p className="p-3 text-xs text-ink-dim">正在加载终端…</p>}><XtermOutput /></Suspense>

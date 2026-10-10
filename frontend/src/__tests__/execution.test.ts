@@ -1,8 +1,9 @@
-/** 执行层契约测试：Profile 注册/检测、Backend 路由、Python/C++ 明确不支持。
+/** 执行层契约测试：Profile 注册/检测、Backend 路由、Python 远程后端路由。
  *
  * Worker 内部协议已由 runJavaScript.test.ts 覆盖；esbuild 打包由 bundler
  * 独立测试（需真实 WASM）。此处 mock Worker 层与 bundler，专注测试
- * 执行层的路由/编排/契约逻辑。
+ * 执行层的路由/编排/契约逻辑。远程后端的结果映射在
+ * remotePythonBackend.test.ts 单独测试（mock API 层）。
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
@@ -23,6 +24,7 @@ import {
   getProfile,
   isTestFile,
   listProfiles,
+  selectBackend,
   UnsupportedExecutionError,
 } from '../lib/execution'
 
@@ -41,11 +43,11 @@ describe('LanguageProfile', () => {
     expect(ts!.supportedBackends).toContain('browser-worker')
   })
 
-  it('Python Profile 已定义但无可用后端（不伪造）', () => {
+  it('Python Profile 已定义并路由到远程沙箱后端（P4.2b 真实支持）', () => {
     const py = getProfile('python')
     expect(py).toBeDefined()
     expect(py!.sourceExtensions).toContain('py')
-    expect(py!.supportedBackends).toEqual([])
+    expect(py!.supportedBackends).toEqual(['remote-pytest'])
   })
 
   it('C++ Profile 已定义但无可用后端', () => {
@@ -64,6 +66,8 @@ describe('LanguageProfile', () => {
   it('测试文件模式匹配', () => {
     expect(isTestFile('src/a.test.ts', 'typescript')).toBe(true)
     expect(isTestFile('src/a.ts', 'typescript')).toBe(false)
+    expect(isTestFile('tests/test_a.py', 'python')).toBe(true)
+    expect(isTestFile('src/a.py', 'python')).toBe(false)
   })
 
   it('Profile 列表包含三种语言', () => {
@@ -91,11 +95,12 @@ describe('执行路由', () => {
     expect(mockedRun).toHaveBeenCalledOnce()
   })
 
-  it('Python 请求抛出"无可用后端"（不伪造）', async () => {
+  it('Python 请求路由到 remote-pytest 后端（不再是不支持）', () => {
     const vfs = new Map([['main.py', 'print("hello")']])
-    await expect(
-      execute({ mode: 'run', entryPoint: 'main.py', files: vfs, languageId: 'python' }),
-    ).rejects.toThrow(UnsupportedExecutionError)
+    const backend = selectBackend({ mode: 'run', entryPoint: 'main.py', files: vfs, languageId: 'python' })
+    expect(backend.backendId).toBe('remote-pytest')
+    expect(backend.capabilities.inBrowser).toBe(false)
+    expect(backend.capabilities.maxTrustLevel).toBe('practice')
   })
 
   it('C++ 请求抛出"无可用后端"', async () => {

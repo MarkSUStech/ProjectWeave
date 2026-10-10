@@ -30,6 +30,8 @@ export interface ExecutionRequest {
   languageId: string
   /** 执行超时（毫秒），默认由 Backend 决定。 */
   timeoutMs?: number
+  /** 远程执行的标准输入（随请求一次性提交；浏览器后端忽略）。 */
+  stdin?: string
   /** 版本追踪：与运行数据绑定的指纹。 */
   codeFingerprint?: string
 }

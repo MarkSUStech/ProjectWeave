@@ -34,5 +34,23 @@ class Settings(BaseSettings):
     # 单次教学回合的生成超时（秒）
     ai_timeout_seconds: float = 45.0
 
+    # --- 远程执行沙箱（P4.2b，D32）---
+    # 总开关：关闭时创建执行返回 503（不伪造成功）。
+    execution_enabled: bool = True
+    # 单次执行超时上限（毫秒）；请求值超过则 422。
+    execution_max_timeout_ms: int = 30000
+    # 同时运行的沙箱数上限（超出排队）。
+    execution_max_concurrent: int = 2
+    # 单次执行文件数 / 总字节数 / stdin 上限。
+    execution_max_files: int = 200
+    execution_max_total_bytes: int = 4 * 1024 * 1024
+    execution_max_stdin_chars: int = 64 * 1024
+    # stdout/stderr 各自保留上限（超出截断并标记）。
+    execution_output_max_chars: int = 256 * 1024
+    # 沙箱资源限制。
+    execution_memory_mb: int = 512
+    execution_cpus: float = 1.0
+    execution_pids_limit: int = 128
+
 
 settings = Settings()

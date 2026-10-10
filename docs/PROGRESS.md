@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-11（P4.2a 多文件 TypeScript 运行与跨文件测试，含语言无关执行架构）
+更新时间：2026-10-11（P4.2b 远程执行沙箱与 Python 支持，D32/D33）
 
 ## 已完成（经过验证）
 
@@ -320,3 +320,47 @@
 - 自研断言 API 是 jest 子集（toBe/toEqual/toBeTruthy/toBeFalsy/toContain/toThrow/.not），不承诺语法全集兼容（D14）。
 - 快照内联存 DB（每文件 50 份 × 1MB 上限）；多用户/大项目场景再评估内容寻址 + 对象存储（D15）。
 - 自动保存固定 2.5s 防抖且默认开启（代码级可关）；设置面板提供开关属后续 UI 工作。
+
+### P4.2b 远程执行沙箱与 Python 支持（D32/D33）
+
+- [x] **统一远程执行协议**（语言无关，D32）：`POST /executions`（202）→
+      `GET /executions/{id}?afterSeq=`（增量事件轮询，SSE 预留同一语义）→
+      `POST /executions/{id}/cancel`（幂等）；状态机
+      queued→preparing→running→completed|failed|timed-out|cancelled；
+      completed=执行跑完（退出码/断言失败是业务结果）、failed=基础设施失败；
+      phases 通用阶段记录（C++ build+run 复用同一形状）
+- [x] **SandboxManager 最小实现**（Docker 一次性容器）：network none、
+      read-only 根 + noexec tmpfs（uid 10001 属主）、非 root、cap-drop ALL、
+      no-new-privileges、memory/cpu/pids 限额、stdin gzip-tar 注入（不挂
+      宿主目录）、pw.sandbox 标签追踪、启动后台清理 + 用后即毁（超时/取消
+      kill 整个容器并 rm）；gVisor/微 VM 同协议预留；普通 Docker 不是
+      恶意多租户可靠边界的诚实声明（backend/sandbox/README.md）
+- [x] **Python Profile + RemotePythonBackend + PythonRunner**（D33）：
+      CPython 3.12-slim + pytest 预装镜像（backend/sandbox/python/Dockerfile，
+      非 root、无密钥）；driver 随执行注入（run 子进程 + pytest Recorder
+      插件逐用例 file/line/失败消息 + 看门狗）；traceback 确定性解析映射
+      文件行号（归一化容器绝对路径）；结果经 stdout 标记行回传；
+      `__pw` 保留命名空间防覆盖；语言差异全部封装在 LanguageRunner，
+      公共执行服务零语言逻辑
+- [x] **教学系统集成**：traceback→诊断（文件:行号，Mentor 可读）；
+      测试结果进 TaskPanel/测试面板；evaluate 契约增加 source
+      (browser/remote) + executionId 溯源；trace 扩展 executionId/backend；
+      `execution-finished` 服务端事件（幂等）；**信任级固定 practice**
+      （服务端执行 ≠ 正式认证，P5 再建可信快照）
+- [x] **前端接入**：pythonProfile→remote-pytest 真实路由；remotePython
+      后端（400ms 轮询 + 增量事件流式回传 + 取消 + 503/超时明确报错）；
+      runRemote 终端胶水（状态行/流式输出/trace/并发拒绝）；
+      IdePage 运行按钮按语言分发（TS 浏览器 / Python 远程）；
+      canRunPath/isAnyTestPath（.py 可执行、test_*.py 识别为测试）；
+      终端 stdin 输入框 + 远程执行"停止"按钮；测试面板 Python 路由
+- [x] **安全与清理验证**：路径校验拒绝绝对/`..`/反斜杠/盘符/保留名/
+      `__pw`；文件数/总字节/stdin/超时/输出全上限；环境变量白名单；
+      超时/取消后 `docker ps -a --filter label=pw.sandbox=1` 零遗留
+- [x] 验证：后端 pytest **162 全过**（新增 38：FakeSandbox 注入的 API
+      生命周期/校验/上限/503/取消/增量事件/截断 + python_runner 纯单元
+      13）+ PG 4 全过；**Docker E2E 11 个全过**（PW_SANDBOX_E2E=1 选入：
+      验收 A hello/B import/C stdin/D pytest 成/E 断言行号定位/收集错误/
+      F 无限循环超时清理/G 宿主文件+网络封锁+只读根/J 取消零遗留）；
+      前端 vitest **246 全过**（新增 19：executions API/远程后端映射/
+      runRemote 胶水/路由更新）+ typecheck/build 全过；真实 uvicorn 冒烟
+      （import+stdin 912ms、取消、容器清理）通过；TS 原路径零回归

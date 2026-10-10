@@ -423,3 +423,32 @@
 **理由**：全站即时预览与可恢复默认满足高度自定义需求；与项目布局和服务端 AI 介入模式分离，避免恢复外观意外改变教学行为。稳定 Monaco 模型保留撤销和草稿。
 
 **边界**：本机字体回退；相对字号不等同浏览器缩放；不支持任意 CSS、跨设备同步、已开标签页实时同步。存储异常明确显示，当前更改继续生效。布局重置仍服从锁定且只作用当前模式。完整选项与验证见 UI_COMPONENTS.md。
+
+## D32 · 远程执行沙箱：统一会话协议 + Docker 一次性容器 + 诚实的信任级
+
+**日期**：2026-10-11。
+
+**背景**：P4.2a 只能浏览器执行 TypeScript。Python 需要 CPython 真机运行（input/traceback/pytest），必须服务端执行；用户代码绝不能进 FastAPI 主进程。
+
+**决策**：
+- **统一执行协议**（语言无关）：`POST /api/v1/executions`（202 排队）→ `GET /{id}?afterSeq=`（增量事件轮询，SSE 预留同一语义）→ `POST /{id}/cancel`（幂等）。状态机 queued→preparing→running→completed|failed|timed-out|cancelled；**completed = 执行跑完**（程序退出码非 0/断言失败是业务结果），**failed = 基础设施失败**；phases 通用阶段记录（C++ build+run 复用）。
+- **隔离手段**（Docker 一次性容器）：network none、read-only 根 + noexec tmpfs（uid 10001 属主）、非 root、cap-drop ALL、no-new-privileges、memory/cpu/pids 限额、stdin tar.gz 注入（不挂宿主目录、不 docker cp）、pw.sandbox 标签追踪 + 启动清理 + 用后即毁（超时/取消 kill 整个容器）。
+- **文件防线**：路径校验拒绝绝对/`..`/反斜杠/盘符/保留名/`__pw` 保留命名空间；文件数/总字节/stdin/输出全部上限截断；环境变量白名单（不透传服务端配置）。
+- **诚实边界**：普通 Docker ≠ 恶意多租户可靠隔离，仅面向教学失误代码；gVisor/微 VM 未来实现同一 `SandboxManager` 协议即可。**信任级固定 practice**——服务端执行 ≠ 正式认证，正式认证需服务端受保护测试与可信快照（P5）；无 Docker/镜像 → 503 明确报错，绝不伪造。
+- 沙箱流式输出经 `read1` 分块读取 + 300ms 节流落库（`read(n)` 会阻塞到读满，教训记录）。
+
+**代价**：每次执行起一个容器（~0.3-1.5s 冷启动）；输出轮询粒度 400ms；会话行内快照使 DB 行较大（上限控制）。
+
+**验证**：后端 162 用例（FakeSandbox 注入：生命周期/校验/上限/503/取消/增量事件/截断）+ PG 4；Docker E2E 11 个（验收 A-G/J 含超时清理、宿主文件与网络封锁、只读根、取消零遗留）；真实 uvicorn 冒烟（import+stdin、取消、容器清理）全过。
+
+## D33 · 语言差异封装在 LanguageRunner，公共执行服务零语言逻辑
+
+**日期**：2026-10-11。
+
+**背景**：执行服务要同时支撑 Python（单阶段解释执行）与未来 C++（build+run 两阶段、编译器诊断、CMake 项目、DAP 调试），公共模块不能渗入语言特有命令或命名逻辑。
+
+**决策**：`LanguageRunner` 协议承担三件事——`validate_files`（扩展名/入口约定）、`build_spec`（构造容器命令 + stdin 文件包）、`parse_result`（原始输出 → 协议化结果）；公共 `ExecutionService` 只做会话状态机、通用校验与资源上限。PythonRunner 首版：CPython 3.12 固定镜像 + 预装 pytest（不做任意 pip install，requirements 受控处理留待后续）；结果经 stdout 尾部 `===PW_RESULT===` 标记行回传（driver 内 pytest Recorder 插件给逐用例 file/line/失败消息，traceback 确定性解析映射文件行号并归一化容器绝对路径）。C++（P4.2c）= 实现 CppRunner（g++/clang 两阶段、诊断 source='build'）+ 注册 Profile，协议与服务零改动。
+
+**取舍**：驱动随每次执行注入 tar（多 ~6KB/次，换取镜像纯净与驱动可升级）；`__pw` 为保留命名空间防用户文件覆盖驱动。
+
+**验证**：python_runner 纯单元 13 个（tar 结构/traceback/pytest 映射/超时标记）；E2E 覆盖多文件 import、pytest 成败定位（断言行号而非 def 行）、收集错误。
