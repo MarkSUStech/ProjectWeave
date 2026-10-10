@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { listConcepts } from '../api/concepts'
 import { listMastery } from '../api/mastery'
 import { ApiError } from '../api/client'
@@ -8,6 +7,11 @@ import type { DimensionEstimate, Mastery } from '../types/mastery'
 import { Badge } from '../components/ui/Badge'
 import { ErrorBanner, Spinner } from '../components/ui/Feedback'
 import { EmptyState } from '../components/ui/PlaceholderState'
+
+import { Button } from '../components/ui/Button'
+import { motion, AnimatePresence } from 'motion/react'
+import { useUiReducedMotion } from '../hooks/useUiReducedMotion'
+const ConceptGraph = lazy(() => import('../components/ConceptGraph'))
 
 const DOMAIN_LABELS: Record<string, string> = {
   javascript: 'JavaScript',
@@ -49,19 +53,21 @@ function ConceptCard({
   onToggle: () => void
   mastery?: Mastery
 }) {
+  const reduced = useUiReducedMotion()
   return (
-    <div className="rounded-lg border border-edge bg-panel">
+    <div className="project-surface rounded-xl border border-edge-soft bg-panel">
       <button
         type="button"
+        aria-expanded={expanded}
         onClick={onToggle}
-        className="flex w-full flex-col items-start gap-1 px-4 py-3 text-left"
+        className="flex w-full flex-col items-start gap-2 p-5 text-left transition-colors hover:bg-panel-2/40 rounded-xl"
       >
         <div className="flex w-full items-center justify-between gap-2">
           <span className="font-medium text-ink">{concept.title}</span>
           <span className="shrink-0 text-[11px] text-ink-faint">{expanded ? '收起 ▴' : '展开 ▾'}</span>
         </div>
         <span className="font-mono text-[11px] text-ink-faint">{concept.id}</span>
-        <p className="text-xs leading-relaxed text-ink-dim">{concept.description}</p>
+        <p className="text-[13px] leading-6 text-ink-dim">{concept.description}</p>
         <div className="mt-1 flex flex-wrap items-center gap-1.5">
           <MasteryBadge understanding={mastery?.dimensions.understanding} />
           {concept.prerequisites.length > 0 ? (
@@ -73,8 +79,8 @@ function ConceptCard({
           )}
         </div>
       </button>
-      {expanded && (
-        <div className="space-y-2.5 border-t border-edge-soft px-4 py-3 text-xs">
+      <AnimatePresence initial={false}>{expanded && (
+        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: reduced ? 0 : 0.2 }} className="overflow-hidden space-y-2.5 border-t border-edge-soft px-4 py-3 text-xs">
           <div>
             <div className="mb-1 font-medium text-ink-dim">学习目标</div>
             <ul className="space-y-1">
@@ -105,14 +111,15 @@ function ConceptCard({
               </ul>
             </div>
           )}
-        </div>
-      )}
+        </motion.div>
+      )}</AnimatePresence>
     </div>
   )
 }
 
 /** 知识图谱浏览页：全局知识库预览 + 当前用户掌握估计叠加。 */
 export default function ConceptsPage() {
+  const [view, setView] = useState<'list' | 'graph'>('list')
   const [concepts, setConcepts] = useState<Concept[] | null>(null)
   const [domains, setDomains] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -150,15 +157,12 @@ export default function ConceptsPage() {
   }, [concepts, domains])
 
   return (
-    <div className="mx-auto min-h-full max-w-5xl px-6 py-10">
-      <header className="mb-6">
-        <Link to="/" className="mb-3 inline-block text-sm text-ink-dim hover:text-ink">
-          ← 返回项目列表
-        </Link>
-        <h1 className="text-xl font-bold tracking-tight">知识图谱</h1>
-        <p className="mt-1 text-xs leading-relaxed text-ink-faint">
+    <div className="mx-auto min-h-full max-w-[1180px] px-6 py-12 lg:px-10">
+      <header className="mb-10">
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">知识图谱</h1>
+        <p className="mt-4 max-w-3xl text-[15px] leading-7 text-ink-dim">
           系统的可测量知识单元与先修关系（当前 {concepts?.length ?? '…'} 个概念）。
-          能力诊断（P2.2）与课程规划（P2.4）将基于这张图工作；此处为全局知识库预览。
+          能力诊断与课程规划基于这张图工作；掌握状态仅来自真实学习证据。
         </p>
       </header>
 
@@ -171,7 +175,14 @@ export default function ConceptsPage() {
         />
       )}
 
-      <div className="space-y-6">
+      {concepts && concepts.length > 0 && <div className="mb-8 inline-flex gap-1 rounded-lg bg-panel p-1" role="group" aria-label="知识视图">
+        <Button size="sm" variant="ghost" className={view === 'list' ? 'workspace-nav-active bg-panel-2 text-ink' : 'text-ink-dim'} aria-pressed={view === 'list'} onClick={() => setView('list')}>概念列表</Button>
+        <Button size="sm" variant="ghost" className={view === 'graph' ? 'workspace-nav-active bg-panel-2 text-ink' : 'text-ink-dim'} aria-pressed={view === 'graph'} onClick={() => setView('graph')}>依赖图</Button>
+      </div>}
+      {view === 'graph' && concepts && concepts.length > 0 && <Suspense fallback={<Spinner label="正在加载图组件…" />}>
+        <ConceptGraph concepts={concepts} masteryByConcept={masteryByConcept} onSelect={(id) => { setExpandedId(id); setView('list') }} />
+      </Suspense>}
+      <div className={`space-y-8 ${view === 'graph' ? 'hidden' : ''}`}>
         {[...grouped.entries()].map(([domain, items]) => (
           <section key={domain}>
             <h2 className="mb-2.5 flex items-center gap-2 text-sm font-semibold text-ink-dim">

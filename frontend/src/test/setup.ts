@@ -1,3 +1,13 @@
-// @testing-library/react 在开启 vitest globals 时会自动注册 cleanup，
-// 此文件预留给未来的全局测试桩（matchMedia、IntersectionObserver 等）。
-export {}
+// jsdom 不提供尺寸和媒体查询，真实布局另在浏览器验收。
+Object.defineProperty(window, 'matchMedia', { writable: true, value: (query: string) => ({
+  matches: false, media: query, onchange: null,
+  addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true,
+}) })
+globalThis.ResizeObserver = class {
+  observe() {} unobserve() {} disconnect() {}
+}
+globalThis.IntersectionObserver = class {
+  root = null; rootMargin = '0px'; thresholds = [0]
+  observe() {} unobserve() {} disconnect() {} takeRecords() { return [] }
+}
+Element.prototype.scrollIntoView = () => {}

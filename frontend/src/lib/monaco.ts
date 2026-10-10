@@ -8,6 +8,8 @@
  */
 import { loader } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
+import { useAppearanceStore } from '../stores/appearanceStore'
+import { THEME_PALETTES, readableAccent } from './appearance'
 
 let configured = false
 
@@ -15,6 +17,21 @@ export function configureMonaco(): typeof monaco {
   if (configured) return monaco
   configured = true
   // 让 @monaco-editor/react 使用本地打包的 monaco 实例而非 CDN。
+  const updateTheme = () => {
+    const p = useAppearanceStore.getState().preferences
+    const c = THEME_PALETTES[p.theme]
+    monaco.editor.defineTheme('projectweave', { base: p.theme === 'paper' ? 'vs' : 'vs-dark', inherit: true, rules: [], colors: {
+      'editor.background': c.editor, 'editor.foreground': c.ink, 'editorLineNumber.foreground': c.faint,
+      'editor.lineHighlightBackground': c.raised, 'editor.selectionBackground': `${p.accent}55`, 'editorWidget.background': c.raised,
+      'editorCursor.foreground': readableAccent(p.accent, c.editor), 'editorLineNumber.activeForeground': c.ink,
+    } })
+    monaco.editor.setTheme('projectweave')
+  }
+  updateTheme()
+  const unsubscribe = useAppearanceStore.subscribe((state, previous) => {
+    if (state.preferences.theme !== previous.preferences.theme || state.preferences.accent !== previous.preferences.accent) updateTheme()
+  })
+  if (import.meta.hot) import.meta.hot.dispose(unsubscribe)
   loader.config({ monaco })
   return monaco
 }

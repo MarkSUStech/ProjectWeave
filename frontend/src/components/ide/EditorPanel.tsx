@@ -4,6 +4,9 @@ import { configureMonaco } from '../../lib/monaco'
 import { isRunnablePath, isTestPath } from '../../lib/runner/runFile'
 import { Button } from '../ui/Button'
 import { PlaceholderState } from '../ui/PlaceholderState'
+import { FileCode2 } from 'lucide-react'
+import { useAppearanceStore } from '../../stores/appearanceStore'
+import { EDITOR_FONTS } from '../../lib/appearance'
 
 /** 根据扩展名推断 Monaco 语言。 */
 function languageOf(path: string): string {
@@ -51,6 +54,7 @@ export function EditorPanel({
   onSave,
   onRun,
 }: EditorPanelProps) {
+  const p = useAppearanceStore((s) => s.preferences)
   useEffect(() => {
     configureMonaco()
   }, [])
@@ -63,6 +67,8 @@ export function EditorPanel({
     const handler = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return
       const key = event.key.toLowerCase()
+      // 设置弹窗内的组合键不应触发背后文件的保存/执行。
+      if (useAppearanceStore.getState().open && (key === 's' || key === 'enter')) { event.preventDefault(); return }
       if (key === 's') {
         event.preventDefault()
         onSave()
@@ -76,9 +82,10 @@ export function EditorPanel({
   }, [onSave, onRun, canRun])
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-col">
-      <div className="flex items-center justify-between gap-2 border-b border-edge-soft bg-panel px-3 py-1.5">
-        <span className="min-w-0 truncate font-mono text-xs text-ink-dim">
+    <div className="workspace-editor flex h-full min-h-0 min-w-0 flex-col">
+      <div className="editor-toolbar flex shrink-0 items-center justify-between gap-2 border-b border-edge-soft bg-panel px-4">
+        <span className="inline-flex min-w-0 items-center gap-2 truncate text-xs text-ink-dim">
+          <FileCode2 className="size-3.5 shrink-0 text-accent" />
           {openPath ?? '未打开文件'}
         </span>
         <div className="flex shrink-0 items-center gap-2">
@@ -132,16 +139,21 @@ export function EditorPanel({
         ) : (
           <Editor
             height="100%"
-            theme="vs-dark"
+            theme="projectweave"
             language={languageOf(openPath)}
             value={content}
             onChange={(value) => onChange(value ?? '')}
             options={{
-              fontSize: 13,
-              minimap: { enabled: true },
+              fontSize: p.editorFontSize,
+              lineHeight: Math.round(p.editorFontSize * p.editorLineHeight),
+              fontFamily: EDITOR_FONTS[p.editorFont],
+              fontLigatures: p.ligatures,
+              wordWrap: p.wordWrap ? 'on' : 'off',
+              lineNumbers: p.lineNumbers ? 'on' : 'off',
+              minimap: { enabled: p.minimap },
               scrollBeyondLastLine: false,
               automaticLayout: true,
-              padding: { top: 10 },
+              padding: { top: 18, bottom: 12 },
             }}
             loading={
               <div className="flex h-full items-center justify-center text-xs text-ink-faint">

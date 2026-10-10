@@ -45,6 +45,8 @@ describe('DashboardPage', () => {
     renderDashboard()
     expect(await screen.findByText('Markdown 笔记编辑器')).toBeTruthy()
     expect(screen.getByText('从零重建')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '打开工作区' }).getAttribute('href')).toBe(`/projects/${fixture.id}/ide`)
+    expect(screen.getByRole('link', { name: /了解当前能力/ }).getAttribute('href')).toBe(`/projects/${fixture.id}/assessment`)
   })
 
   it('项目为空时展示空状态', async () => {

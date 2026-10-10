@@ -1,27 +1,16 @@
 import type { ReactNode } from 'react'
+import { Card as ShadcnCard, CardHeader, CardContent, CardTitle, CardAction } from './upstream/card'
 
-export function Card({
-  title,
-  actions,
-  children,
-  className = '',
-}: {
-  title?: ReactNode
-  actions?: ReactNode
-  children: ReactNode
-  className?: string
+export function Card({ title, actions, children, className = '' }: {
+  title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string
 }) {
   return (
-    <section
-      className={`rounded-lg border border-edge bg-panel ${className}`}
-    >
-      {(title || actions) && (
-        <header className="flex items-center justify-between border-b border-edge-soft px-4 py-2.5">
-          <h3 className="text-sm font-semibold text-ink">{title}</h3>
-          {actions}
-        </header>
-      )}
-      <div className="p-4">{children}</div>
-    </section>
+    <ShadcnCard className={`project-surface gap-0 rounded-xl border-edge-soft bg-panel py-0 text-ink ${className}`}>
+      {(title || actions) && <CardHeader className="items-center border-b border-edge-soft px-5 py-4">
+        <CardTitle className="text-sm">{title}</CardTitle>
+        {actions && <CardAction>{actions}</CardAction>}
+      </CardHeader>}
+      <CardContent className="p-5">{children}</CardContent>
+    </ShadcnCard>
   )
 }

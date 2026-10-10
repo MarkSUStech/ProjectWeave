@@ -1,6 +1,8 @@
+// Adapted from Motion Primitives (MIT). See public/licenses/motion-primitives.txt.
 'use client';
-import { ReactNode } from 'react';
-import { motion, Variants } from 'motion/react';
+import { type ReactNode, type JSX } from 'react';
+import { motion, type Variants } from 'motion/react';
+import { useUiReducedMotion } from '../../../hooks/useUiReducedMotion';
 import React from 'react';
 
 export type PresetType =
@@ -108,12 +110,14 @@ function AnimatedGroup({
   as = 'div',
   asChild = 'div',
 }: AnimatedGroupProps) {
+  const reduced = useUiReducedMotion();
   const selectedVariants = {
     item: addDefaultVariants(preset ? presetVariants[preset] : {}),
     container: addDefaultVariants(defaultContainerVariants),
   };
   const containerVariants = variants?.container || selectedVariants.container;
   const itemVariants = variants?.item || selectedVariants.item;
+  const stillVariants = { hidden: { opacity: 1, filter: 'none', x: 0, y: 0, scale: 1, rotate: 0, rotateX: 0 }, visible: { opacity: 1, filter: 'none', x: 0, y: 0, scale: 1, rotate: 0, rotateX: 0 } };
 
   const MotionComponent = React.useMemo(
     () => motion.create(as as keyof JSX.IntrinsicElements),
@@ -128,11 +132,11 @@ function AnimatedGroup({
     <MotionComponent
       initial='hidden'
       animate='visible'
-      variants={containerVariants}
+      variants={reduced ? {} : containerVariants}
       className={className}
     >
       {React.Children.map(children, (child, index) => (
-        <MotionChild key={index} variants={itemVariants}>
+        <MotionChild key={index} variants={reduced ? stillVariants : itemVariants} transition={reduced ? { duration: 0 } : undefined}>
           {child}
         </MotionChild>
       ))}

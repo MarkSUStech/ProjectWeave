@@ -1,5 +1,7 @@
 /** 文件类型分发测试：.js 直跑、.ts 真编译器转译、其他拒绝。 */
 import { describe, expect, it } from 'vitest'
+import { runInNewContext } from 'node:vm'
+import { buildWorkerSource } from '../lib/runner/workerSource'
 import { extensionOf, isRunnablePath, prepareScript } from '../lib/runner/runFile'
 
 describe('extensionOf / isRunnablePath', () => {
@@ -26,6 +28,15 @@ describe('extensionOf / isRunnablePath', () => {
 })
 
 describe('prepareScript', () => {
+  it('种子文件的 export 可真实执行，不依赖全局 exports，异步输出先于 done', async () => {
+    const prepared = await prepareScript('main.ts', 'export function greet(name: string) { return `你好 ${name}` }; await Promise.resolve(); console.log(greet("Weave"));')
+    const messages: { type: string; text?: string }[] = []
+    const self = { postMessage: (message: { type: string; text?: string }) => messages.push(message), console: {} }
+    await runInNewContext(buildWorkerSource(prepared.code), { self, console: { log: (...args: unknown[]) => self.postMessage({ type: 'console', text: args.join(' ') }) } })
+    expect(messages.find((message) => message.type === 'console')?.text).toBe('你好 Weave')
+    expect(messages.at(-1)?.type).toBe('done')
+    expect(messages.some((message) => message.type === 'error')).toBe(false)
+  })
   it('.js 原样返回且不标记转译', async () => {
     const prepared = await prepareScript('main.js', 'console.log(1)')
     expect(prepared).toEqual({ status: 'ok', code: 'console.log(1)', transpiled: false })

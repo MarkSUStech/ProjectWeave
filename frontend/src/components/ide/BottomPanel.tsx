@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { PlaceholderState } from '../ui/PlaceholderState'
 import { Button } from '../ui/Button'
 import { useRunStore } from '../../stores/runStore'
@@ -6,21 +6,16 @@ import { useTestStore } from '../../stores/testStore'
 import { listEvents } from '../../api/events'
 import { ApiError } from '../../api/client'
 import { formatClock, formatDateTime } from '../../lib/labels'
-import type { LearningEvent, TerminalEntry, TestFileResult } from '../../types'
+import type { LearningEvent, TestFileResult } from '../../types'
+
+import { PanelTabs } from '../ui/PanelTabs'
+const XtermOutput = lazy(() => import('./XtermOutput'))
 
 const TABS = [
   { id: 'terminal', label: '终端' },
   { id: 'tests', label: '测试' },
   { id: 'events', label: '学习事件' },
 ] as const
-
-const ENTRY_CLASSES: Record<TerminalEntry['kind'], string> = {
-  system: 'text-ink-faint italic',
-  log: 'text-ink-dim',
-  info: 'text-accent',
-  warn: 'text-warn',
-  error: 'text-danger',
-}
 
 const TYPE_LABELS: Record<string, string> = {
   'file-saved': '保存',
@@ -47,7 +42,7 @@ function payloadSummary(event: LearningEvent): string {
 }
 
 /** 学习事件页签：服务端事件日志的实时视图（可刷新）。 */
-function EventsView({ projectId }: { projectId: string }) {
+export function EventsView({ projectId }: { projectId: string }) {
   const [events, setEvents] = useState<LearningEvent[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -104,23 +99,14 @@ function EventsView({ projectId }: { projectId: string }) {
   )
 }
 
-function TerminalView() {
-  const entries = useRunStore((state) => state.entries)
+export function TerminalView() {
   const running = useRunStore((state) => state.running)
   const clear = useRunStore((state) => state.clear)
-  const listRef = useRef<HTMLDivElement>(null)
-
-  // 新输出时自动滚动到底部
-  useEffect(() => {
-    const list = listRef.current
-    if (list) list.scrollTop = list.scrollHeight
-  }, [entries])
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between border-b border-edge-soft px-3 py-1">
         <span className="text-[11px] text-ink-faint">
-          浏览器运行器 · 隔离 Worker（无 DOM / 应用状态访问）
+          浏览器 Worker 输出 · 远程 Shell 未连接（P4 未实现）
           {running && <span className="ml-2 text-accent">● 运行中</span>}
         </span>
         <button
@@ -131,23 +117,8 @@ function TerminalView() {
           清空
         </button>
       </div>
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-1.5">
-        {entries.length === 0 ? (
-          <p className="py-2 font-mono text-xs text-ink-faint">
-            尚无输出。打开 .js / .ts 文件后点击「▶ 运行」（Ctrl+Enter）。
-          </p>
-        ) : (
-          <ul className="space-y-0.5 font-mono text-xs leading-relaxed">
-            {entries.map((entry) => (
-              <li key={entry.id} className={`whitespace-pre-wrap break-all ${ENTRY_CLASSES[entry.kind]}`}>
-                <span className="mr-2 select-none text-[10px] text-ink-faint/60">
-                  {formatClock(entry.at)}
-                </span>
-                {entry.text}
-              </li>
-            ))}
-          </ul>
-        )}
+      <div className="min-h-0 flex-1 bg-app">
+        <Suspense fallback={<p className="p-3 text-xs text-ink-dim">正在加载终端…</p>}><XtermOutput /></Suspense>
       </div>
     </div>
   )
@@ -166,7 +137,7 @@ function fileBadgeText(result: TestFileResult): string {
   return `${failed > 0 ? '✘' : '✔'} ${passed} 通过${failed > 0 ? ` / ${failed} 失败` : ''}`
 }
 
-function TestView({ onRun }: { onRun: () => void }) {
+export function TestView({ onRun }: { onRun: () => void }) {
   const { running, results, progress, lastRunAt } = useTestStore()
 
   if (results.length === 0 && !running) {
@@ -248,28 +219,14 @@ export function BottomPanel({ onRunTests, projectId }: { onRunTests: () => void;
   const setTab = useRunStore((state) => state.setActiveTab)
 
   return (
-    <div className="flex min-h-0 flex-col border-t border-edge bg-panel">
-      <div className="flex items-center gap-1 border-b border-edge-soft px-2">
-        {TABS.map(({ id, label }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={`border-b-2 px-3 py-1.5 text-xs transition-colors ${
-              tab === id
-                ? 'border-accent text-ink'
-                : 'border-transparent text-ink-faint hover:text-ink-dim'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <div className="flex h-full min-h-0 flex-col border-t border-edge bg-panel">
+      <PanelTabs value={tab} onChange={setTab} items={TABS} label="输出面板">
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {tab === 'terminal' && <TerminalView />}
         {tab === 'tests' && <TestView onRun={onRunTests} />}
         {tab === 'events' && <EventsView projectId={projectId} />}
       </div>
+      </PanelTabs>
     </div>
   )
 }

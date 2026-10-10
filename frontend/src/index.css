@@ -6,20 +6,45 @@
  * 背景 app -> panel -> panel-2 三层，edge 为描边，accent 为主色。
  */
 @theme {
-  --color-app: #0a0e14;
-  --color-panel: #10151d;
-  --color-panel-2: #161d28;
-  --color-edge: #232d3d;
-  --color-edge-soft: #1a2331;
-  --color-ink: #e6edf3;
-  --color-ink-dim: #8b98a9;
-  --color-ink-faint: #5c6878;
-  --color-accent: #4f9cf9;
-  --color-accent-strong: #2f7de1;
-  --color-accent-soft: #17273d;
-  --color-ok: #3fb950;
-  --color-warn: #d29922;
-  --color-danger: #f85149;
+  --color-app: #151517;
+  --color-panel: #1b1b1f;
+  --color-panel-2: #242429;
+  --color-edge: #36363d;
+  --color-edge-soft: #2b2b31;
+  --color-ink: #eeeef2;
+  --color-ink-dim: #bdbdc8;
+  --color-ink-faint: #9797a6;
+  --color-accent: #c1b5ff;
+  --color-accent-strong: #b5a5fc;
+  --color-accent-soft: #302b42;
+  --color-ok: #83d5a6;
+  --color-warn: #e8bf6a;
+  --color-danger: #f08080;
+
+  /* shadcn 语义映射，避免平行主题。 */
+  --color-background: #1b1b1f;
+  --color-foreground: #eeeef2;
+  --color-card: #1b1b1f;
+  --color-card-foreground: #eeeef2;
+  --color-primary: #b5a5fc;
+  --color-primary-foreground: #211a39;
+  --color-secondary: #242429;
+  --color-secondary-foreground: #eeeef2;
+  --color-muted: #242429;
+  --color-muted-foreground: #bdbdc8;
+  --color-popover: #242429;
+  --color-popover-foreground: #eeeef2;
+  --color-accent-foreground: #211a39;
+  --color-border: #36363d;
+  --color-input: #36363d;
+  --color-ring: #c1b5ff;
+  --color-destructive: #b6414d;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --color-editor: #171719;
 
   --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas,
     SFMono-Regular, Menlo, monospace;
@@ -42,6 +67,61 @@ body {
     sans-serif;
 }
 
+:root { color-scheme: dark; --motion-fast: 140ms; --motion-normal: 200ms; --motion-ease: cubic-bezier(0.16, 1, 0.3, 1); }
+@layer base {
+  * { border-color: var(--color-edge); }
+  button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+  button:not(:disabled), [role="button"]:not([aria-disabled="true"]) { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+  input, textarea { caret-color: var(--color-accent); }
+  kbd, time { font-variant-numeric: tabular-nums; }
+}
+[data-slot="resizable-panel"] { overflow: hidden; }
+[data-slot="resizable-handle"][aria-disabled="true"] { pointer-events: none; }
+.react-flow { --xy-background-color: var(--color-app); --xy-node-color: var(--color-ink); --xy-controls-button-background-color: var(--color-panel-2); --xy-controls-button-color: var(--color-ink); --xy-controls-button-border-color: var(--color-edge); --xy-minimap-background-color: var(--color-panel); }
+.xterm .xterm-viewport { scrollbar-color: var(--color-edge) transparent; }
+
+.app-sidebar { background: var(--pw-sidebar, #19191c); }
+.workspace-chrome { background: var(--pw-chrome, #1e1e22); }
+.workspace-editor { background: var(--color-editor); }
+.project-surface { box-shadow: var(--pw-card-shadow, 0 10px 30px -20px #0008); }
+.workspace-nav-active { box-shadow: 0 1px 3px #0003, inset 0 1px 0 #ffffff08; }
+.pw-dock-theme {
+  --dv-group-view-background-color: var(--color-panel);
+  --dv-background-color: var(--color-edge-soft);
+  --dv-tabs-and-actions-container-background-color: var(--pw-chrome, #1e1e22);
+  --dv-tabs-and-actions-container-height: var(--pw-tab-height, 38px);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--color-panel);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--color-panel);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-activegroup-visiblepanel-tab-color: var(--color-ink);
+  --dv-activegroup-hiddenpanel-tab-color: var(--color-ink-faint);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--color-ink-dim);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--color-ink-faint);
+  --dv-tab-divider-color: var(--color-edge-soft);
+  --dv-active-sash-color: var(--color-accent);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  --dv-drag-over-border-color: var(--color-accent);
+  --dv-icon-hover-background-color: var(--color-panel-2);
+  --dv-floating-border: 1px solid var(--color-edge);
+  --dv-floating-box-shadow: 0 16px 48px #0007;
+  --dv-floating-titlebar-background-color: var(--color-panel-2);
+}
+.pw-dock-tab { display: flex; height: 100%; align-items: center; gap: 10px; padding: 0 10px; font-size: 12px; }
+.pw-dock-theme .dv-tab.dv-active-tab { box-shadow: inset 0 2px var(--color-accent); }
+[data-layout-locked="true"] .dv-floating-titlebar,
+[data-layout-locked="true"] [class*="dv-resize-handle"],
+[data-layout-locked="true"] .dv-sash { pointer-events: none; }
+[data-slot="button"][data-variant="outline"] { border-color: var(--color-edge); background: transparent; }
+[data-slot="button"][data-variant="outline"]:hover,
+[data-slot="button"][data-variant="ghost"]:hover { background: var(--color-panel-2); color: var(--color-ink); }
+[data-slot="tabs-trigger"][data-state="active"]::after { border-radius: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+
 ::selection {
   background: color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
@@ -51,3 +131,14 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--color-edge) transparent;
 }
+
+.editor-toolbar { height: var(--pw-toolbar-height, 48px); }
+.page-surface > .min-w-0 { background-image: var(--pw-page-texture, none); background-size: 24px 24px; }
+html[data-ui-texture="dots"] { --pw-page-texture: radial-gradient(var(--color-edge-soft) 1px, transparent 1px); }
+html[data-ui-texture="grid"] { --pw-page-texture: linear-gradient(var(--color-edge-soft) 1px, transparent 1px), linear-gradient(90deg, var(--color-edge-soft) 1px, transparent 1px); }
+html[data-ui-texture="none"] { --pw-page-texture: none; }
+html[data-ui-motion="off"] *, html[data-ui-motion="off"] *::before, html[data-ui-motion="off"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+html[data-ui-density] [data-slot="button"][data-size="sm"] { height: var(--pw-button-height); }
+html[data-ui-density="compact"] .app-sidebar nav a { padding-block: 0.45rem; }
+html[data-ui-density="spacious"] .app-sidebar nav a { padding-block: 0.9rem; }
+.settings-dialog { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }

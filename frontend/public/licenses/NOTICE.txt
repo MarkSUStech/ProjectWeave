@@ -1,0 +1,43 @@
+ProjectWeave frontend third-party notices (verified 2026-10-10)
+
+Copied components and their retained copyright notices:
+- shadcn/ui (MIT): shadcn-ui.txt
+  https://github.com/shadcn-ui/ui
+- Magic UI BlurFade (MIT): magic-ui.txt
+  https://github.com/magicuidesign/magicui
+- Motion Primitives AnimatedGroup (MIT): motion-primitives.txt
+  https://github.com/ibelick/motion-primitives
+
+Installed UI dependencies: version locked by package-lock.json.
+- motion 14.1.0 (MIT): motion.txt
+- @xyflow/react 12.12.0 (MIT): xyflow-react.txt
+- @xterm/xterm 6.0.0 (MIT): xterm-xterm.txt
+- @xterm/addon-fit 0.11.0 (MIT): xterm-addon-fit.txt
+- react-resizable-panels 4.14.3 (MIT): react-resizable-panels.txt
+- dockview-react / dockview / dockview-core 8.4.1 (MIT): dockview.txt
+  https://github.com/dockview/dockview
+- radix-ui 1.7.0 (MIT): radix-ui.txt
+- cmdk 1.1.1 (MIT): cmdk.txt
+- lucide-react 1.55.0 (ISC, with MIT-derived Feather icons): lucide-react.txt
+- class-variance-authority 0.7.1 (Apache-2.0): class-variance-authority.txt
+- clsx 2.1.1 (MIT): clsx.txt
+- tailwind-merge 3.7.0 (MIT): tailwind-merge.txt
+- monaco-editor 0.57.0 (MIT): monaco-editor.txt
+- @monaco-editor/react 4.7.0 (MIT): monaco-editor-react.txt
+
+ELK.js source availability and license election:
+elkjs 0.12.0 is dual licensed EPL-2.0 OR GPL-3.0-or-later.
+ProjectWeave elects EPL-2.0. ELK.js is used as an unmodified, separately
+loaded dependency. Its license is preserved in elkjs.txt.
+Source for the distributed dependency is available at:
+https://registry.npmjs.org/elkjs/-/elkjs-0.12.0.tgz
+Build sources and the underlying Eclipse Layout Kernel sources:
+https://github.com/kieler/elkjs/tree/ff5771d7165445c42c408bb8a090c8035272218c
+https://github.com/eclipse-elk/elk
+The source code is available under EPL-2.0. Redistribution must preserve
+these notices and source availability. Modifications to EPL-covered code
+must comply with EPL-2.0. Do not describe ELK.js as MIT licensed.
+
+This list covers the UI libraries used by this rebuild. It does not
+replace the licenses and notices of other existing/transitive packages.
+See docs/UI_COMPONENTS.md for upstream component file provenance and use.

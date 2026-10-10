@@ -125,7 +125,7 @@ describe('SceneRenderer', () => {
 
   it('内置标准场景可渲染', () => {
     render(<SceneRenderer scene={LATEST_RUN_SCENE} />)
-    expect(screen.getByText('runtime.console-timeline.v1')).toBeTruthy()
+    expect(screen.getByTitle('runtime.console-timeline.v1').textContent).toBe('运行时间线')
     expect(screen.getByText('真实执行')).toBeTruthy()
   })
 
@@ -139,7 +139,7 @@ describe('SceneRenderer', () => {
       ],
     })
     render(<SceneRenderer scene={VARIABLES_STATE_SCENE} />)
-    expect(screen.getByText('runtime.variables-state.v1')).toBeTruthy()
+    expect(screen.getByTitle('runtime.variables-state.v1').textContent).toBe('变量状态')
     expect(screen.getByText('count')).toBeTruthy()
     expect(screen.getByText('title')).toBeTruthy()
     expect(screen.getByText('42')).toBeTruthy() // count 当前值
@@ -164,7 +164,7 @@ describe('SceneRenderer', () => {
       observations: [{ id: 1, name: 'x', value: '1', at: 't2' }],
     })
     render(<SceneRenderer scene={DEBUG_PANEL_SCENE} />)
-    expect(screen.getByText('runtime.debug-panel.v1')).toBeTruthy()
+    expect(screen.getByTitle('runtime.debug-panel.v1').textContent).toBe('运行与状态')
     // 两组件同时可见：时间线输出 + 变量表
     expect(screen.getByText(/组合场景输出/)).toBeTruthy()
     expect(screen.getByText('x')).toBeTruthy()

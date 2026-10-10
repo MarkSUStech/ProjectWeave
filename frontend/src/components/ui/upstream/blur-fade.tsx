@@ -1,3 +1,4 @@
+// Adapted from Magic UI (MIT). See public/licenses/magic-ui.txt.
 "use client"
 
 import { useRef } from "react"
@@ -9,6 +10,7 @@ import {
   type UseInViewOptions,
   type Variants,
 } from "motion/react"
+import { useUiReducedMotion } from '../../../hooks/useUiReducedMotion'
 
 type MarginType = UseInViewOptions["margin"]
 
@@ -44,6 +46,7 @@ export function BlurFade({
   blur = "6px",
   ...props
 }: BlurFadeProps) {
+  const reduced = useUiReducedMotion()
   const ref = useRef(null)
   const inViewResult = useInView(ref, { once: true, margin: inViewMargin })
   const isInView = !inView || inViewResult
@@ -77,12 +80,12 @@ export function BlurFade({
         initial="hidden"
         animate={isInView ? "visible" : "hidden"}
         exit="hidden"
-        variants={combinedVariants}
+        variants={reduced ? { hidden: { opacity: 1, filter: 'none', x: 0, y: 0 }, visible: { opacity: 1, filter: 'none', x: 0, y: 0 } } : combinedVariants}
         transition={{
-          delay: 0.04 + delay,
-          duration,
+          delay: reduced ? 0 : 0.04 + delay,
+          duration: reduced ? 0 : duration,
           ease: "easeOut",
-          ...(shouldTransitionFilter ? { filter: { duration } } : {}),
+          ...(!reduced && shouldTransitionFilter ? { filter: { duration } } : {}),
         }}
         className={className}
         {...props}

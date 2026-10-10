@@ -1,6 +1,6 @@
 /**
  * 当前打开文件的快照历史：列表、内容预览与恢复。
- * openPath 变化时自动重新加载。
+ * openPath 或已保存版本变化时自动重新加载。
  */
 import { useCallback, useEffect, useState } from 'react'
 import {
@@ -23,7 +23,7 @@ export interface UseFileHistoryResult {
   refresh: () => Promise<void>
 }
 
-export function useFileHistory(projectId: string, openPath: string | null): UseFileHistoryResult {
+export function useFileHistory(projectId: string, openPath: string | null, savedAt?: string): UseFileHistoryResult {
   const [history, setHistory] = useState<SnapshotMeta[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ id: string; content: string } | null>(null)
@@ -53,7 +53,7 @@ export function useFileHistory(projectId: string, openPath: string | null): UseF
     }
     setHistory(null)
     void refresh()
-  }, [openPath, refresh])
+  }, [openPath, refresh, savedAt])
 
   const loadPreview = useCallback(
     async (snapshotId: string) => {

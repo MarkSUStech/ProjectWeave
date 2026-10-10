@@ -24,7 +24,7 @@ export function CanvasPlaceholder({
       description: 'Visual Interaction Engine 将组合标准可视化组件（数组、栈帧、时间线等），数据来源会标注“真实执行 / 静态结构 / 概念模拟”。',
     },
     architecture: {
-      title: '架构视图',
+      title: '架构视图 · 未实现',
       phase: 'P3',
       description: '将基于静态分析展示模块依赖与项目结构图（React Flow），支持与源码双向定位。',
     },

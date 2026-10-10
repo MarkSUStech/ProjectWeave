@@ -10,6 +10,14 @@ import { ensureBuiltinComponents } from './builtinComponents'
 import { Badge } from '../components/ui/Badge'
 import { shortFingerprint } from '../lib/fingerprint'
 import type { RunTrace } from '../stores/runStore'
+import { Info } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../components/ui/upstream/tooltip'
+
+const SCENE_LABELS: Record<string, string> = {
+  'runtime.console-timeline.v1': '运行时间线',
+  'runtime.variables-state.v1': '变量状态',
+  'runtime.debug-panel.v1': '运行与状态',
+}
 
 const SOURCE_TONES = {
   runtime: 'ok',
@@ -41,14 +49,27 @@ export function SceneRenderer({ scene, trace = null, stale = false }: SceneRende
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-edge-soft bg-panel px-3 py-1.5">
-        <span className="truncate font-mono text-[11px] text-ink-dim" title={valid.templateId}>
-          {valid.templateId}
-        </span>
+      <header className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-edge-soft bg-panel px-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-xs font-medium text-ink-dim" title={valid.templateId}>
+            {SCENE_LABELS[valid.templateId] ?? valid.templateId}
+          </span>
+          <TooltipProvider delayDuration={350}><Tooltip>
+            <TooltipTrigger asChild>
+              <button type="button" aria-label="场景信息与交互说明" className="rounded p-1 text-ink-faint hover:text-ink">
+                <Info size={13} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-72 space-y-1">
+              <div>{valid.templateId}</div>
+              {valid.allowedInteractions.map((interaction) => <div key={interaction}>{interaction}</div>)}
+            </TooltipContent>
+          </Tooltip></TooltipProvider>
+        </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {trace && (
             <span
-              className="font-mono text-[10px] text-ink-faint"
+              className="font-mono text-[11px] text-ink-faint"
               title={`trace ${trace.traceId} · 指纹 ${trace.fingerprint}`}
             >
               {new Date(trace.at).toLocaleTimeString('zh-CN', { hour12: false })}
@@ -56,11 +77,6 @@ export function SceneRenderer({ scene, trace = null, stale = false }: SceneRende
               {shortFingerprint(trace.fingerprint)}
             </span>
           )}
-          {valid.allowedInteractions.map((interaction) => (
-            <span key={interaction} className="text-[10px] text-ink-faint">
-              {interaction}
-            </span>
-          ))}
           <Badge tone={SOURCE_TONES[valid.sourceType]}>{SOURCE_LABELS[valid.sourceType]}</Badge>
         </div>
       </header>

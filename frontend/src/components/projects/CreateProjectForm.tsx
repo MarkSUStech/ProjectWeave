@@ -129,8 +129,7 @@ export function CreateProjectForm({ onDone }: { onDone?: () => void }) {
         </Button>
       </div>
       <p className="text-xs leading-relaxed text-ink-faint">
-        说明：当前为 P0 阶段，项目规格创建后暂不支持 AI
-        需求分析与课程生成（未实现），你可以先录入目标并进入 IDE 骨架。
+        创建后可进入真实教学 IDE，完成能力诊断并生成样板课程学习路线。AI 需求分析未实现（P4）。
       </p>
     </form>
   )

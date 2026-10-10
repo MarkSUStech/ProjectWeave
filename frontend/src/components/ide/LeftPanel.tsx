@@ -1,7 +1,14 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { Badge } from '../ui/Badge'
 import type { FileMeta, Project, SnapshotMeta } from '../../types'
 import { formatDateTime } from '../../lib/labels'
+
+import { FileCode2, Folder, ChevronRight, ChevronDown, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { Button } from '../ui/Button'
+import { PanelTabs } from '../ui/PanelTabs'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/upstream/dialog'
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '../ui/upstream/dropdown-menu'
+const CodeDiff = lazy(() => import('./CodeDiff'))
 
 /** 由扁平路径构建的目录树节点。 */
 type TreeItem =
@@ -45,6 +52,7 @@ function buildTree(files: FileMeta[]): TreeItem[] {
 }
 
 export interface HistoryTabApi {
+  currentContent?: string
   history: SnapshotMeta[] | null
   error: string | null
   preview: { id: string; content: string } | null
@@ -55,6 +63,7 @@ export interface HistoryTabApi {
 }
 
 export interface LeftPanelProps {
+  view?: 'files' | 'tasks' | 'history'
   project: Project
   files: FileMeta[] | null
   openPath: string | null
@@ -92,11 +101,11 @@ function FileRow({
         <button
           type="button"
           onClick={() => onToggleFolder(item.path)}
-          className="flex w-full items-center gap-1 rounded px-1.5 py-1 text-left text-xs text-ink-dim hover:bg-panel-2 hover:text-ink"
+          className="flex w-full items-center gap-2 rounded-md px-1.5 py-2 text-left text-[13px] text-ink-dim hover:bg-panel-2 hover:text-ink"
           style={{ paddingLeft }}
         >
-          <span className="w-3 text-[10px] text-ink-faint">{isCollapsed ? '▸' : '▾'}</span>
-          <span>📁 {item.name}</span>
+          {isCollapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}
+          <Folder className="size-3.5 text-ink-faint" /><span>{item.name}</span>
         </button>
         {!isCollapsed &&
           item.children.map((child) => (
@@ -118,43 +127,33 @@ function FileRow({
   const active = openPath === item.path
   return (
     <div
-      className={`group flex items-center justify-between rounded pr-1 ${
-        active ? 'bg-accent-soft text-ink' : 'hover:bg-panel-2'
+      className={`group flex items-center justify-between rounded-md pr-1 ${
+        active ? 'bg-panel-2 text-ink' : 'text-ink-dim hover:bg-panel-2'
       }`}
       style={{ paddingLeft }}
     >
       <button
         type="button"
         onClick={() => onOpenFile(item.path)}
-        className="min-w-0 flex-1 truncate py-1 text-left text-xs"
+        className="flex min-w-0 flex-1 items-center gap-2 truncate py-2 text-left text-[13px]"
         title={item.path}
       >
-        <span className={active ? 'text-accent' : ''}>📄 {item.name}</span>
+        <FileCode2 className="size-3.5 shrink-0 text-accent" /><span className="truncate">{item.name}</span>
       </button>
-      <span className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-        <button
-          type="button"
-          title="重命名"
-          onClick={() => onRenameFile(item.path)}
-          className="rounded px-1 text-[11px] text-ink-faint hover:text-ink"
-        >
-          ✎
-        </button>
-        <button
-          type="button"
-          title="删除"
-          onClick={() => onDeleteFile(item.path)}
-          className="rounded px-1 text-[11px] text-ink-faint hover:text-danger"
-        >
-          ✕
-        </button>
-      </span>
+      <DropdownMenu><DropdownMenuTrigger asChild>
+        <button type="button" aria-label={`操作 ${item.path}`} className="rounded p-1 text-ink-faint opacity-50 hover:bg-panel-2 hover:text-ink hover:opacity-100 focus-visible:opacity-100"><MoreHorizontal className="size-3.5" /></button>
+      </DropdownMenuTrigger><DropdownMenuContent align="end" className="min-w-36">
+        <DropdownMenuItem onSelect={() => onRenameFile(item.path)}><Pencil />重命名</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onDeleteFile(item.path)} className="text-danger"><Trash2 />删除文件</DropdownMenuItem>
+      </DropdownMenuContent></DropdownMenu>
     </div>
   )
 }
 
 /** 快照历史页签：当前打开文件的历史版本（查看 / 恢复）。 */
 function HistoryTab({ openPath, api }: { openPath: string | null; api: HistoryTabApi }) {
+  const [restoreTarget, setRestoreTarget] = useState<SnapshotMeta | null>(null)
+  const [compareId, setCompareId] = useState<string | null>(null)
   if (openPath === null) {
     return (
       <p className="px-2 py-3 text-xs leading-relaxed text-ink-faint">
@@ -188,14 +187,11 @@ function HistoryTab({ openPath, api }: { openPath: string | null; api: HistoryTa
                 {snapshot.size}B · {snapshot.sha256}
               </span>
             </button>
+            <Button size="sm" variant="ghost" onClick={() => { setCompareId(snapshot.id); if (api.preview?.id !== snapshot.id) api.onPreview(snapshot.id) }}>比较</Button>
             <button
               type="button"
               disabled={api.restoring}
-              onClick={() => {
-                if (window.confirm(`恢复到 ${formatDateTime(snapshot.createdAt)} 的版本？当前内容会先进入历史。`)) {
-                  api.onRestore(snapshot.id)
-                }
-              }}
+              onClick={() => setRestoreTarget(snapshot)}
               className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[11px] text-ink-dim hover:border-accent/50 hover:text-ink disabled:opacity-50"
             >
               恢复
@@ -210,6 +206,19 @@ function HistoryTab({ openPath, api }: { openPath: string | null; api: HistoryTa
         </div>
       ))}
       {api.previewLoading && <p className="px-1 text-[11px] text-ink-faint">读取内容…</p>}
+      <Dialog open={compareId !== null} onOpenChange={(open) => { if (!open) setCompareId(null) }}>
+        <DialogContent className="flex h-[75vh] max-w-[90vw] flex-col sm:max-w-[1100px]">
+          <DialogHeader><DialogTitle>历史快照与当前草稿</DialogTitle><DialogDescription>{openPath} · 左侧为历史内容，右侧为当前编辑内容；比较不会保存文件。</DialogDescription></DialogHeader>
+          <div className="min-h-0 flex-1">
+            {api.preview?.id === compareId ? <Suspense fallback={<p className="text-xs text-ink-dim">正在加载差异组件…</p>}><CodeDiff original={api.preview.content} modified={api.currentContent ?? ''} path={openPath} /></Suspense> : <p role="status" className="text-xs text-ink-dim">{api.error ?? '正在读取快照…'}</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={restoreTarget !== null} onOpenChange={(open) => { if (!open) setRestoreTarget(null) }}>
+        <DialogContent><DialogHeader><DialogTitle>恢复历史版本</DialogTitle><DialogDescription>恢复到 {restoreTarget && formatDateTime(restoreTarget.createdAt)} 的版本，当前内容会先进入历史。</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="outline" onClick={() => setRestoreTarget(null)}>取消</Button><Button disabled={api.restoring} onClick={() => { if (restoreTarget) api.onRestore(restoreTarget.id); setRestoreTarget(null) }}>确认恢复</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -217,10 +226,15 @@ function HistoryTab({ openPath, api }: { openPath: string | null; api: HistoryTa
 /** 左侧面板：文件 / 任务 / 历史三个页签。 */
 export function LeftPanel(props: LeftPanelProps) {
   const { project, files, openPath, onOpenFile, onCreateFile, onRenameFile, onDeleteFile, historyApi } = props
-  const [tab, setTab] = useState<'files' | 'tasks' | 'history'>('files')
+  const [selectedTab, setTab] = useState<'files' | 'tasks' | 'history'>('files')
+  const tab = props.view ?? selectedTab
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [creating, setCreating] = useState(false)
   const [newPath, setNewPath] = useState('')
+  const [operation, setOperation] = useState<{ type: 'rename' | 'delete'; path: string } | null>(null)
+  const [operationPath, setOperationPath] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [operationError, setOperationError] = useState<string | null>(null)
 
   const tree = useMemo(() => buildTree(files ?? []), [files])
 
@@ -243,41 +257,23 @@ export function LeftPanel(props: LeftPanelProps) {
     }
   }
 
-  const handleRename = (path: string) => {
-    const next = window.prompt('新的文件路径：', path)
-    if (!next || next.trim() === path) return
-    void onRenameFile(path, next.trim())
+  const handleRename = (path: string) => { setOperation({ type: 'rename', path }); setOperationPath(path); setOperationError(null) }
+  const handleDelete = (path: string) => { setOperation({ type: 'delete', path }); setOperationError(null) }
+  const submitOperation = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!operation || busy) return
+    setBusy(true)
+    setOperationError(null)
+    try {
+      const ok = operation.type === 'rename' ? await onRenameFile(operation.path, operationPath.trim()) : await onDeleteFile(operation.path)
+      if (ok) setOperation(null)
+      else setOperationError('操作未完成，请检查文件路径或稍后重试。')
+    } catch { setOperationError('文件操作失败，请重试。') }
+    finally { setBusy(false) }
   }
 
-  const handleDelete = (path: string) => {
-    if (!window.confirm(`确定删除「${path}」？此操作不可恢复。`)) return
-    void onDeleteFile(path)
-  }
-
-  return (
-    <aside className="flex min-h-0 flex-col border-r border-edge bg-panel">
-      <div className="flex border-b border-edge-soft">
-        {(
-          [
-            ['files', '文件'],
-            ['tasks', '任务'],
-            ['history', '历史'],
-          ] as const
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setTab(value)}
-            className={`flex-1 border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
-              tab === value
-                ? 'border-accent text-ink'
-                : 'border-transparent text-ink-faint hover:text-ink-dim'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+  const content = (
+    <>
 
       {tab === 'files' && (
         <>
@@ -318,7 +314,7 @@ export function LeftPanel(props: LeftPanelProps) {
                 <button
                   type="submit"
                   disabled={!newPath.trim()}
-                  className="rounded bg-accent px-2 py-0.5 text-[11px] font-medium text-white disabled:opacity-50"
+                  className="rounded bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
                 >
                   创建
                 </button>
@@ -384,6 +380,19 @@ export function LeftPanel(props: LeftPanelProps) {
           <HistoryTab openPath={openPath} api={historyApi} />
         </div>
       )}
+    </>
+  )
+  return (
+    <aside className="flex h-full min-h-0 flex-col bg-panel">
+      {props.view ? content : <PanelTabs value={tab} onChange={setTab} items={[{ id: 'files', label: '文件' }, { id: 'tasks', label: '任务' }, { id: 'history', label: '历史' }]} label="项目资源">{content}</PanelTabs>}
+      <Dialog open={operation !== null} onOpenChange={(open) => { if (!open && !busy) setOperation(null) }}>
+        <DialogContent><form onSubmit={(event) => void submitOperation(event)} className="space-y-4">
+          <DialogHeader><DialogTitle>{operation?.type === 'delete' ? '删除文件' : '重命名文件'}</DialogTitle><DialogDescription>{operation?.type === 'delete' ? `确定删除「${operation.path}」？文件与历史快照将删除，此操作不可恢复。` : '输入新的相对路径，历史快照会随文件迁移。'}</DialogDescription></DialogHeader>
+          {operation?.type === 'rename' && <div><label htmlFor="rename-path" className="mb-2 block text-xs text-ink-dim">新文件路径</label><input id="rename-path" value={operationPath} onChange={(event) => setOperationPath(event.target.value)} className="w-full rounded-md border border-edge bg-panel-2 px-3 py-2 font-mono text-sm" required disabled={busy} /></div>}
+          {operationError && <p role="alert" className="text-xs text-danger">{operationError}</p>}
+          <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setOperation(null)}>取消</Button><Button type="submit" variant={operation?.type === 'delete' ? 'danger' : 'primary'} disabled={busy || (operation?.type === 'rename' && (!operationPath.trim() || operationPath.trim() === operation.path))}>{busy ? '处理中…' : operation?.type === 'delete' ? '确认删除' : '保存路径'}</Button></DialogFooter>
+        </form></DialogContent>
+      </Dialog>
     </aside>
   )
 }

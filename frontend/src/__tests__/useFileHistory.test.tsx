@@ -35,6 +35,14 @@ beforeEach(() => {
 })
 
 describe('useFileHistory', () => {
+  it('保存后元数据版本变化会重新加载快照，不需要切换文件', async () => {
+    mockedList.mockResolvedValueOnce([]).mockResolvedValue([snapA])
+    const { result, rerender } = renderHook(({ savedAt }) => useFileHistory('p1', 'a.ts', savedAt), { initialProps: { savedAt: 'v1' } })
+    await waitFor(() => expect(result.current.history).toEqual([]))
+    rerender({ savedAt: 'v2' })
+    await waitFor(() => expect(result.current.history).toEqual([snapA]))
+    expect(mockedList).toHaveBeenCalledTimes(2)
+  })
   it('openPath 存在时加载历史列表', async () => {
     mockedList.mockResolvedValue([snapB, snapA])
     const { result } = renderHook(() => useFileHistory('p1', 'a.ts'))
