@@ -5,8 +5,9 @@
 import { useWorkspaceStore } from '../../stores/workspaceStore'
 import {
   confirmPendingPatch,
-  dismissPendingPatch,
+  dismissPatchAction,
   undoLastLayoutChange,
+  type PatchApplyResult,
 } from '../../lib/workspace/executor'
 
 export function WorkspaceNoticeStrip({
@@ -14,8 +15,8 @@ export function WorkspaceNoticeStrip({
   onApplyPatch,
 }: {
   projectId: string
-  /** 返回是否应用成功（由宿主提供：仅当目标文件已打开时写入草稿）。 */
-  onApplyPatch: (path: string, content: string) => boolean
+  /** 由宿主提供（含未保存更改守卫）；返回应用结果与未应用原因。 */
+  onApplyPatch: (path: string, content: string) => PatchApplyResult
 }) {
   const notices = useWorkspaceStore((state) => state.notices)
   const dismiss = useWorkspaceStore((state) => state.dismissNotice)
@@ -73,7 +74,7 @@ export function WorkspaceNoticeStrip({
           className="space-y-2 border-t border-warn/30 bg-warn/5 px-3 py-2 text-xs"
         >
           <div className="font-medium text-warn">
-            A2 · AI 补丁提案（需确认才会应用，应用后仅写入草稿、不自动保存）
+            A2 · AI 补丁提案（需确认才会应用；完整差异预览见 AI Mentor 面板）
           </div>
           <div className="text-ink-dim">
             文件：<span className="font-mono">{String(pendingPatch.payload.path ?? '')}</span>
@@ -81,10 +82,13 @@ export function WorkspaceNoticeStrip({
           <div className="text-ink-dim">
             说明：{String(pendingPatch.payload.description ?? '')}
           </div>
+          <div className="text-[11px] leading-relaxed text-ink-faint">
+            应用后写入编辑器草稿并随自动保存保存到服务器；应用前的内容会自动进入历史快照。文件未打开或您有未保存更改时不会应用。
+          </div>
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => dismissPendingPatch(projectId)}
+              onClick={() => dismissPatchAction(projectId)}
               className="rounded border border-edge px-2.5 py-1 text-[11px] text-ink-dim hover:text-ink"
             >
               拒绝

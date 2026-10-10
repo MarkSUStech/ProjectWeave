@@ -5,7 +5,7 @@ import { ApiError } from '../api/client'
 import type { Project } from '../types'
 import { ErrorBanner, Spinner } from '../components/ui/Feedback'
 import { Button } from '../components/ui/Button'
-import { IdeTopBar, layoutFor } from '../components/ide/IdeTopBar'
+import { IdeTopBar } from '../components/ide/IdeTopBar'
 import { LeftPanel } from '../components/ide/LeftPanel'
 import { EditorPanel } from '../components/ide/EditorPanel'
 import { MentorPanel } from '../components/ide/MentorPanel'
@@ -25,6 +25,12 @@ import { isTestPath } from '../lib/runner/runFile'
 import { trackClientEvent } from '../lib/eventTracker'
 import { fetchSuggestion } from '../api/tutor'
 import type { TutorDecision } from '../types/tutor'
+import { WorkspaceLayout } from '../components/ide/WorkspaceLayout'
+import { CommandPalette } from '../components/ide/CommandPalette'
+import { WorkspaceNoticeStrip } from '../components/ide/WorkspaceNoticeStrip'
+import type { PatchApplyResult } from '../lib/workspace/executor'
+import { isRunnablePath } from '../lib/runner/runFile'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { formatDateTime } from '../lib/labels'
 
 /**
@@ -69,6 +75,7 @@ export default function IdePage() {
 }
 
 function IdeWorkspace({ project }: { project: Project }) {
+  const reduced = useReducedMotion()
   const mode = useIdeUiStore((state) => state.mode)
   const running = useRunStore((state) => state.running)
   const testsRunning = useTestStore((state) => state.running)
@@ -90,7 +97,7 @@ function IdeWorkspace({ project }: { project: Project }) {
     refresh,
   } = useProjectFiles(project.id)
 
-  const fileHistory = useFileHistory(project.id, openPath)
+  const fileHistory = useFileHistory(project.id, openPath, files?.find((file) => file.path === openPath)?.updatedAt)
 
   const handleRestoreSnapshot = useCallback(
     async (snapshotId: string) => {
@@ -104,6 +111,7 @@ function IdeWorkspace({ project }: { project: Project }) {
   )
 
   const historyApi = {
+    currentContent: draftContent,
     history: fileHistory.history,
     error: fileHistory.error,
     preview: fileHistory.preview,
@@ -201,80 +209,50 @@ function IdeWorkspace({ project }: { project: Project }) {
     />
   )
 
-  const layout = layoutFor(mode)
-
-  return (
-    <div
-      className="grid h-screen overflow-hidden bg-app"
-      style={{
-        gridTemplateColumns: layout.columns,
-        gridTemplateRows: layout.rows,
-      }}
-    >
-      <div style={{ gridColumn: '1 / -1', gridRow: '1' }}>
-        <IdeTopBar project={project} />
-      </div>
-
-      <div style={{ gridColumn: '1', gridRow: '2' }} className="min-h-0">
-        <LeftPanel
-          project={project}
-          files={files}
-          openPath={openPath}
-          onOpenFile={(path) => void openFile(path)}
-          onCreateFile={createFile}
-          onRenameFile={renameFile}
-          onDeleteFile={deleteFile}
-          historyApi={historyApi}
-        />
-      </div>
-
-      <div style={{ gridColumn: '2', gridRow: '2' }} className="flex min-h-0 min-w-0 flex-col">
-        {suggestion !== null && (
-          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-warn/30 bg-warn/10 px-3 py-2">
-            <div className="min-w-0">
-              <span className="mr-2 rounded bg-warn/20 px-1.5 py-0.5 text-[10px] font-medium text-warn">
-                AI 建议 · 非阻塞
-              </span>
-              <span className="text-xs leading-relaxed text-ink-dim">{suggestion.message}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSuggestion(null)}
-              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-ink-faint hover:text-ink"
-            >
-              忽略
-            </button>
-          </div>
-        )}
-        {mode === 'coding' && editor}
-        {mode === 'debugging' && (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 shrink-0 basis-3/5">{editor}</div>
-            <div className="min-h-0 flex-1 border-t border-edge">
-              <SceneRenderer scene={DEBUG_PANEL_SCENE} trace={runTrace} stale={canvasStale} />
-            </div>
-          </div>
-        )}
-        {mode === 'visual-learning' && (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1">
-              <SceneRenderer scene={VARIABLES_STATE_SCENE} trace={runTrace} stale={canvasStale} />
-            </div>
-            <div className="min-h-0 shrink-0 basis-1/4">{editor}</div>
-          </div>
-        )}
-        {mode === 'architecture' && <CanvasPlaceholder kind="architecture" />}
-      </div>
-
-      {mode !== 'architecture' && (
-        <div style={{ gridColumn: '3', gridRow: '2' }} className="min-h-0">
-          <MentorPanel projectId={project.id} />
+  const editorWithSuggestion = <div className="flex h-full min-h-0 flex-col">
+    <AnimatePresence initial={false}>
+      {suggestion && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: reduced ? 0 : 0.2 }} className="shrink-0 overflow-hidden border-b border-warn/30 bg-warn/10">
+        <div className="flex items-start justify-between gap-3 px-3 py-2">
+          <div className="min-w-0 text-xs leading-relaxed text-ink-dim"><span className="mr-2 text-warn">AI 建议 · 非阻塞</span>{suggestion.message}</div>
+          <Button size="sm" variant="ghost" onClick={() => setSuggestion(null)}>忽略</Button>
         </div>
-      )}
+      </motion.div>}
+    </AnimatePresence>
+    {editor}
+  </div>
+  const canvas = mode === 'architecture' ? <CanvasPlaceholder kind="architecture" /> :
+    <SceneRenderer scene={mode === 'debugging' ? DEBUG_PANEL_SCENE : VARIABLES_STATE_SCENE} trace={runTrace} stale={canvasStale} />
 
-      <div style={{ gridColumn: '1 / -1', gridRow: '3' }} className="min-h-0">
-        <BottomPanel onRunTests={() => void handleRunTests()} projectId={project.id} />
-      </div>
-    </div>
+  // A2 补丁应用守卫（§10.2 用户内容优先）：目标文件必须已打开且无未保存更改，
+  // 防止 AI 补丁覆盖用户正在编辑的草稿（自动保存 2.5s 内的输入也受保护）。
+  const applyPatch = useCallback(
+    (path: string, content: string): PatchApplyResult => {
+      if (openPath !== path) {
+        return { applied: false, reason: `目标文件「${path}」当前未打开` }
+      }
+      if (dirty) {
+        return { applied: false, reason: '当前有未保存的更改，请等待自动保存完成（或手动保存）后再应用' }
+      }
+      setDraft(content)
+      return { applied: true }
+    },
+    [openPath, dirty, setDraft],
   )
+
+  return <div className="flex h-screen min-w-[960px] flex-col overflow-hidden bg-app">
+    <IdeTopBar project={project} commands={<CommandPalette files={files} onOpenFile={(path) => void openFile(path)}
+      onSave={() => void save()} onRun={handleRun} canSave={!!openPath && dirty && !saving}
+      canRun={!!openPath && isRunnablePath(openPath) && !running && !testsRunning} />} />
+    <WorkspaceNoticeStrip projectId={project.id} onApplyPatch={applyPatch} />
+    <div className="min-h-0 flex-1">
+      <WorkspaceLayout mode={mode}
+        left={<LeftPanel project={project} files={files} openPath={openPath} onOpenFile={(path) => void openFile(path)}
+          onCreateFile={createFile} onRenameFile={renameFile} onDeleteFile={deleteFile} historyApi={historyApi} />}
+        editor={editorWithSuggestion} canvas={canvas} mentor={<MentorPanel projectId={project.id} currentFile={openPath ? { path: openPath, content: draftContent } : undefined} onApplyPatch={applyPatch} />}
+        bottom={<BottomPanel onRunTests={() => void handleRunTests()} projectId={project.id} />} />
+    </div>
+    <footer className="flex h-7 shrink-0 items-center justify-between border-t border-edge-soft bg-panel px-4 text-[11px] text-ink-faint">
+      <span>ProjectWeave · 浏览器工作区</span><span>{files?.length ?? '…'} 个文件 · {dirty ? '有未保存更改' : '自动保存已开启'}</span>
+    </footer>
+  </div>
 }

@@ -15,6 +15,8 @@
 
 **影响**：P3 全部条目交付（挂载为收尾一行）；A2 确认应用草稿后 H4 的独立性重测可引用 workspace-action 事件；撤销栈为会话级（不持久化，与设计 §10.2 undoToken 语义一致——token=decisionId:index）。
 
+**端到端集成追记（同日）**：并行前端合入后完成挂载——MentorPanel 对**新决策**执行 applyWorkspaceActions（历史决策不重放，避免加载时重演布局切换）；CodeDiff 差异弹窗加确认/拒绝（`confirmPatchAction` 按动作确认，非仅队列）；IdePage 提供**脏草稿守卫**（目标文件未打开或有未保存更改 → 拒绝应用并说明原因，保护用户输入）；**自动保存承诺对齐**——应用补丁必然被 2.5s 防抖保存，故文案改为"写入草稿并随自动保存保存到服务器，应用前内容进入历史快照（D15）可恢复"，UI 承诺与实际行为一致；apply 回调签名改为 `PatchApplyResult {applied, reason?}` 以区分拒绝原因。
+
 ---
 
 ## D27 · 阶段验收：浏览器测试结果提交 + 确定性 rubric（套件全绿）+ coding→application 证据
@@ -343,3 +345,19 @@
 **决策**：单仓库、双工程、共享 docs/；不引入 pnpm workspace/nx 等工具。
 
 **理由**：两工程技术栈不同（Python/Node），无共享包；保持启动命令最简。
+
+---
+
+## D29 · 前端重建：实际开源控件、真实数据与按场景加载
+
+**日期**：2026-10-10。
+
+**决策**：复制并定制 shadcn/ui、Magic UI BlurFade、Motion Primitives AnimatedGroup 的原始源码，保留许可证；复用 Radix/cmdk 交互能力。使用 react-resizable-panels v4 管理锁定与尺寸保存，Monaco 继续编辑并新增只读 Diff，xterm 展示真实 Worker 流，React Flow + ELK 布局真实知识图。所有库映射统一 token，Motion 尊重 reduced-motion；不添业务 mock。静态分析架构/状态机与任务图、补丁应用宿主接入留到其数据与权限流程完备后。
+
+**理由**：成熟原语提供焦点、键盘、拖动与编辑能力；增量替换展示层可保留既有文件/教学/验收逻辑。知识依赖已具备真实数据，应先验证这一个图切片；执行可视化保留现有 SceneRenderer，不把变量/时间线强行转成 React Flow。
+
+**代价与许可**：Monaco、TS 编译器与 ELK 仍有大体积 chunk；路由、图、Diff、终端和编译器按需加载，保留构建警告。ELK 包标注 EPL-2.0 OR GPL-3.0-or-later，本项目选 EPL-2.0、未修改其代码，发行保留完整许可和源码获取声明；不能按 MIT 描述。详见 `UI_COMPONENTS.md` 与 `frontend/public/licenses/NOTICE.txt`。
+
+**验收发现修复**：原 TS 单文件种子 export 生成全局 exports 引用，Worker 报 ReferenceError；现使用 CommonJS 输出加局部 exports 的 async 包装，await 完成后才结束，保留不支持多文件 import 的边界，并以真实 Worker 脚本执行回归。保存后 updatedAt 更新会刷新历史列表，避免 Diff 入口直到切换文件才出现。Diff 包装库默认在 widget 解绑前释放模型会抛异常；现由父 layout cleanup 先解绑、释放模型，再由库释放 widget，既不吞异常也不保留泄漏模型，3次真实开关复测通过。
+
+**验证**：npm run verify 191 用例/typecheck/build 通过；后端 123 passed / 4 skipped；1440×900 / 1920×1080 真实浏览器编辑、保存、Diff、运行/测试、分栏/锁定与知识图验收。真实 LLM 提案仅做契约/UI fixture 验证，本轮禁用 AI Provider。

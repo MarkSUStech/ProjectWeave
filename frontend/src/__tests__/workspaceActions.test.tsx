@@ -18,7 +18,7 @@ const { useWorkspaceStore } = await import('../stores/workspaceStore')
 const {
   applyWorkspaceActions,
   confirmPendingPatch,
-  dismissPendingPatch,
+  dismissPatchAction,
   undoLastLayoutChange,
 } = await import('../lib/workspace/executor')
 const { WorkspaceNoticeStrip } = await import('../components/ide/WorkspaceNoticeStrip')
@@ -127,7 +127,7 @@ describe('applyWorkspaceActions', () => {
 describe('A2 确认流程', () => {
   it('确认后写入草稿（经宿主回调），上报 confirmed', () => {
     applyWorkspaceActions(decision([patch('src/main.ts', 'new content')]), 'p1')
-    const apply = vi.fn().mockReturnValue(true)
+    const apply = vi.fn().mockReturnValue({ applied: true })
     const ok = confirmPendingPatch('p1', apply)
     expect(ok).toBe(true)
     expect(apply).toHaveBeenCalledWith('src/main.ts', 'new content')
@@ -141,7 +141,7 @@ describe('A2 确认流程', () => {
 
   it('目标文件未打开：apply 返回 false → 提示并上报 rejected', () => {
     applyWorkspaceActions(decision([patch('src/other.ts', 'x')]), 'p1')
-    const ok = confirmPendingPatch('p1', () => false)
+    const ok = confirmPendingPatch('p1', () => ({ applied: false }))
     expect(ok).toBe(false)
     expect(useWorkspaceStore.getState().notices.at(-1)?.text).toContain('未打开')
     expect(mockedTrack).toHaveBeenCalledWith(
@@ -153,7 +153,7 @@ describe('A2 确认流程', () => {
 
   it('拒绝：清空队列并上报 rejected', () => {
     applyWorkspaceActions(decision([patch()]), 'p1')
-    dismissPendingPatch('p1')
+    dismissPatchAction('p1')
     expect(useWorkspaceStore.getState().pendingPatch).toBeNull()
     expect(mockedTrack).toHaveBeenCalledWith(
       'workspace-action',
@@ -166,8 +166,8 @@ describe('A2 确认流程', () => {
 describe('WorkspaceNoticeStrip（UI 集成点组件）', () => {
   it('A0 通知显示、可关闭；A2 确认卡可应用', async () => {
     applyWorkspaceActions(decision([notice('提示内容'), patch('a.ts', 'content')]), 'p1')
-    const apply = vi.fn().mockReturnValue(true)
-    render(<WorkspaceNoticeStrip projectId="p1" onApplyPatch={apply} />)
+    const apply = vi.fn().mockReturnValue({ applied: true })
+    render(<WorkspaceNoticeStrip projectId="p1" onApplyPatch={(p, c) => apply(p, c)} />)
 
     expect(screen.getByText('提示内容')).toBeTruthy()
     expect(screen.getByRole('alertdialog')).toBeTruthy()
@@ -182,12 +182,12 @@ describe('WorkspaceNoticeStrip（UI 集成点组件）', () => {
 
   it('A1 切换后显示撤销按钮；空状态不渲染', async () => {
     const { container, rerender } = render(
-      <WorkspaceNoticeStrip projectId="p1" onApplyPatch={() => false} />,
+      <WorkspaceNoticeStrip projectId="p1" onApplyPatch={() => ({ applied: false })} />,
     )
     expect(container.firstChild).toBeNull() // 无通知无提案 → 不渲染
 
     applyWorkspaceActions(decision([switchLayout('debugging')]), 'p1')
-    rerender(<WorkspaceNoticeStrip projectId="p1" onApplyPatch={() => false} />)
+    rerender(<WorkspaceNoticeStrip projectId="p1" onApplyPatch={() => ({ applied: false })} />)
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /撤销 AI 布局切换/ }))
     expect(useIdeUiStore.getState().mode).toBe('coding')

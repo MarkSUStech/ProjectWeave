@@ -94,48 +94,81 @@ export function undoLastLayoutChange(projectId: string): void {
   )
 }
 
-/** A2 确认：把补丁内容写入编辑器草稿（不保存）；返回是否应用成功。 */
-export function confirmPendingPatch(
+/** 补丁应用结果：由宿主（IdePage）提供，reason 用于精确的用户提示。 */
+export interface PatchApplyResult {
+  applied: boolean
+  /** 未应用的原因（如"目标文件未打开"/"当前有未保存的更改"）。 */
+  reason?: string
+}
+
+/** A2 确认（针对具体动作）：写入编辑器草稿。
+ *
+ * 行为与承诺（D28 追记）：应用只改草稿；自动保存随后会把它保存到服务器，
+ * 且覆盖前的内容按 D15 进入历史快照——用户代码不丢失。宿主在文件未打开
+ * 或存在未保存更改时拒绝应用（保护用户草稿，§10.2 用户内容优先）。
+ */
+export function confirmPatchAction(
   projectId: string,
-  apply: (path: string, content: string) => boolean,
+  action: WorkspaceAction,
+  apply: (path: string, content: string) => PatchApplyResult,
 ): boolean {
-  const patch = useWorkspaceStore.getState().pendingPatch
-  useWorkspaceStore.getState().setPendingPatch(null)
-  if (!patch) return false
-  const path = String(patch.payload.path ?? '')
-  const content = patch.payload.content
+  const path = String(action.payload.path ?? '')
+  const content = action.payload.content
+  // 队列同步清空（若就是这个待确认动作）
+  if (useWorkspaceStore.getState().pendingPatch === action) {
+    useWorkspaceStore.getState().setPendingPatch(null)
+  }
   if (typeof content !== 'string' || !path) {
     useWorkspaceStore.getState().addNotice(
       'propose-patch',
-      `补丁提案只有说明（${String(patch.payload.description ?? '')}），没有可应用的内容。`,
+      `补丁提案只有说明（${String(action.payload.description ?? '')}），没有可应用的内容。`,
       'warn',
+    )
+    trackClientEvent(
+      'workspace-action',
+      { kind: 'propose-patch', level: 'A2', outcome: 'rejected', path },
+      { projectId },
     )
     return false
   }
-  const applied = apply(path, content)
+  const result = apply(path, content)
   useWorkspaceStore.getState().addNotice(
     'propose-patch',
-    applied
-      ? `已把 AI 补丁写入「${path}」的编辑器草稿（未保存，请检查后自行保存）。`
-      : `补丁目标文件「${path}」当前未打开，请先打开该文件再应用。`,
-    applied ? 'info' : 'warn',
+    result.applied
+      ? `已把 AI 补丁写入「${path}」的编辑器草稿；自动保存会将其保存到服务器，应用前的内容已进入历史快照，可随时恢复。`
+      : `补丁未应用：${result.reason ?? `目标文件「${path}」当前未打开`}`,
+    result.applied ? 'info' : 'warn',
   )
   trackClientEvent(
     'workspace-action',
-    { kind: 'propose-patch', level: 'A2', outcome: applied ? 'confirmed' : 'rejected', path },
+    { kind: 'propose-patch', level: 'A2', outcome: result.applied ? 'confirmed' : 'rejected', path },
     { projectId },
   )
-  return applied
+  return result.applied
 }
 
-/** 用户拒绝 A2 提案。 */
-export function dismissPendingPatch(projectId: string): void {
+/** A2 确认（队列中的待确认动作）。 */
+export function confirmPendingPatch(
+  projectId: string,
+  apply: (path: string, content: string) => PatchApplyResult,
+): boolean {
   const patch = useWorkspaceStore.getState().pendingPatch
-  useWorkspaceStore.getState().setPendingPatch(null)
-  if (patch) {
+  if (!patch) return false
+  return confirmPatchAction(projectId, patch, apply)
+}
+
+/** 用户拒绝某个 A2 提案（队列或具体动作通用）。 */
+export function dismissPatchAction(projectId: string, action?: WorkspaceAction): void {
+  const target = action ?? useWorkspaceStore.getState().pendingPatch
+  if (action && useWorkspaceStore.getState().pendingPatch === action) {
+    useWorkspaceStore.getState().setPendingPatch(null)
+  } else if (!action) {
+    useWorkspaceStore.getState().setPendingPatch(null)
+  }
+  if (target) {
     trackClientEvent(
       'workspace-action',
-      { kind: 'propose-patch', level: 'A2', outcome: 'rejected', path: String(patch.payload.path ?? '') },
+      { kind: 'propose-patch', level: 'A2', outcome: 'rejected', path: String(target.payload.path ?? '') },
       { projectId },
     )
   }

@@ -1,8 +1,20 @@
 # 进度记录
 
-更新时间：2026-10-10（P3.4 完成，P3 全部交付）
+更新时间：2026-10-10（P3 基础能力与前端开源组件重建切片；未实现项见下）
 
 ## 已完成（经过验证）
+
+### 前端视觉与开源组件重建（增量切片）
+
+- [x] 统一深色设计 token、shadcn/Radix 基础控件与真实命令搜索；文件操作/快照恢复使用 Dialog，文件菜单使用 DropdownMenu，Tabs 支持方向键与面板关联。
+- [x] Monaco 主题与只读 Diff（真实历史快照 / Tutor 返回的代码提案）；原文件保存、自动保存、运行、测试、教学证据与 Policy Gate 保留。保存后快照列表立即刷新；TS 种子 export 在单文件 Worker 中可真实执行，不承诺跨文件 import。Diff 关闭时先解除模型绑定再释放，3次浏览器开关复测无错误。
+- [x] react-resizable-panels v4 + shadcn Resizable：四模式工作区、鼠标/键盘调尺寸、最小尺寸、每模式本地保存、布局锁定。
+- [x] xterm + FitAddon 展示真实 Worker 输出；明确远程 Shell 未连接（P4）；React Flow + ELK 展示知识库真实先修图与掌握证据（17 节点 / 21 边本机验收）。
+- [x] Motion 页面/模式/画布/折叠/思考状态动画；Motion Primitives Mentor 消息淡入；Magic UI 项目卡片 BlurFade；减少动态效果分支及公共组件交互单测。
+- [x] `docs/UI_COMPONENTS.md` 记录实际使用、版本、来源、许可证（ELK 选择 EPL-2.0）、设计系统、性能限制和后续范围；完整许可证与源码获取声明随 public 发布。
+- [x] 验证：`npm run verify`（32 文件 / 191 用例、typecheck、build）通过；后端 pytest 123 passed / 4 skipped（本轮未跑可选 PG）；1440×900 和 1920×1080 浏览器验收，真实编辑保存、Diff、输出、2 个种子测试、observe 变量、菜单/命令/布局与知识图。
+- [x] 视觉细化：按用户确认的石墨灰＋柔紫统一首页/知识页/工作区、Monaco/xterm/知识图配色；扩大标题与代码字号、减少描边和整块高亮、统一 Mentor 输入框；场景采用中文标题并保留模板/交互详情。再次 `npm run verify` 191 用例全过；1440/1920 工作区与390px 首页无横向溢出、真实运行正常；未改后端。
+- [ ] 架构/任务/状态机图、行内教学高亮、WorkspaceAction 宿主应用确认、课程状态反馈动画、远程 Shell、大图性能优化仍为后续；没有业务 mock 或伪造成功结果。
 
 ### P0 基础
 
@@ -156,14 +168,22 @@
       前端 `lib/workspace/executor.ts` 确定性执行链（A0 通知 / **A1 布局
       锁定联防 [AT-05] + 撤销栈 [撤销亦受锁定约束]** / A2 确认队列→
       仅写草稿不自动保存）；`WorkspaceNoticeStrip` 通知条组件（新文件）；
-      每动作上报 workspace-action 审计事件；**UI 挂载单行接入点已备好，
-      因并行 Agent 正在重构 IdePage/MentorPanel 主动避让（D28）**
+      每动作上报 workspace-action 审计事件
+- [x] **P3.4 端到端集成（本轮）**：MentorPanel 收到新决策即执行
+      applyWorkspaceActions（历史决策不重放）；差异弹窗（并行 Agent 的
+      CodeDiff）加"应用到编辑器草稿/拒绝"（confirmPatchAction 按动作确认）；
+      IdePage 挂载 WorkspaceNoticeStrip + **脏草稿守卫**（目标文件未打开或
+      有未保存更改时拒绝应用，防覆盖用户输入）；**自动保存承诺对齐**——
+      应用文案改为"写入草稿并随自动保存保存，应用前内容进入历史快照"
+      （与 2.5s 防抖实际行为一致，D28 追记）；场景 A-E 测试覆盖
 - [x] 验证（P3.5 轮）：SQLite 117 + PG 4 + 前端 170 全过；推送（6b4b78f）
 - [x] 验证：SQLite pytest 123 个用例全过（workspace 6：分级分类/A2 需答案级
       请求/五类非法移除/非列表与封顶/端到端携带动作与原因落库/H4 联动
       [未请求降级+动作移除，请求后消息与 A2 均放行]）；PG 4 全过；前端
-      vitest 186 个全过（workspace 10：A0/A1 执行与撤销/锁定拒绝含 AT-05/
-      撤销尊重锁定/A2 三态/通知条 UI）；typecheck/build 全过（含并行文件）
+      vitest 195 个全过（workspace 10 + mentorPanel 场景 A-E 5：
+      A 未锁定切换+撤销恢复/B 锁定拒绝布局不变/C 未确认源码不变/
+      D 差异弹窗确认后才 applyPatch/拒绝清队列；executor 测试适配
+      PatchApplyResult 签名）；npm run verify 全过；后端 API 契约零改动
 
 ### P1 验证汇总
 
@@ -214,7 +234,7 @@
 - 仓库尚未 git init（等待用户确认初始化与远端策略）。
 - Monaco 使 dist 约 14MB；TS 转译器懒加载 chunk 约 3.3MB（仅首次运行 .ts 时下载）；后续可继续拆 chunk。
 - 文件内容内联存 DB（1MB 上限）；快照/对象存储在 P1.3 引入（D9）。
-- 重命名/删除使用浏览器 prompt/confirm，后续换成内联 UI。
+- 文件重命名/删除与快照恢复已使用 Radix Dialog；切换文件未保存确认仍沿用原 hook 的浏览器确认。
 - 浏览器 Worker 隔离为便利级（无 DOM/应用状态访问，但同源 fetch 理论可行）；真实网络隔离待远程沙箱（D11）。
 - 运行器/测试尚无 stdin；多文件 import 不支持（Worker 单文件模式，种子示例已自包含并注明）；`.tsx` 不支持运行。
 - 自研断言 API 是 jest 子集（toBe/toEqual/toBeTruthy/toBeFalsy/toContain/toThrow/.not），不承诺语法全集兼容（D14）。
