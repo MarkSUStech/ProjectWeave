@@ -105,11 +105,13 @@ OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
 ## 3. 前端（frontend/）
 
 - **技术**：React 19 + TypeScript（strict）+ Vite 8 + Tailwind CSS v4（`@theme` 令牌化深色主题）+ Zustand（persist）+ zod。
+- **执行层（`src/lib/execution/`，P4.2a，D30）**：语言无关的执行契约层——`types.ts`（ExecutionRequest/Result/Diagnostic/ConsoleOutput/TestFileOutcome，信任级 practice/formal）；`LanguageProfile.ts`（TS/Python/C++ Profile 注册表，Python/C++ supportedBackends=[] 即当前不可执行，不伪造）；`ExecutionBackend.ts`（后端策略接口）；`registry.ts`（路由：请求 → 可处理后端，不支持则 UnsupportedExecutionError）；`backends/browserWorker.ts`（TypeScript 浏览器 Worker 后端：单文件 ts-compiler 转译 / 多文件 esbuild-wasm 打包 → Worker 沙箱，信任级 practice）；`backends/remoteStub.ts`（远程后端占位：remote-pytest/remote-cmake 接口已定义，canHandle=false 不被选中）。扩展新语言 = 注册 Profile + 实现 Backend，零修改 Curriculum/Learner/TeachingScene。
+- **多文件模块执行**：`src/lib/runner/bundler.ts`——esbuild-wasm（懒加载 ~14MB WASM，部署于 public/esbuild.wasm）+ 虚拟文件系统插件；路径规范化（禁 `..` 越界）+ 扩展名补全（.ts/.tsx/.js/.jsx 等）+ 外部 npm 包明确拒绝；编译时间记录；`hasRelativeImports()` 检测（单文件 export 不触发打包路径）。`runFile.ts` 无 VFS 时始终单文件模式（兼容旧调用）。
 - **路由**：`/`（仪表盘）、`/concepts`（知识图谱 + 掌握徽标）、`/projects/:id`（详情 + 诊断 + 学习路线 + **里程碑任务卡：状态徽标（含"需修正"）与「测试验收」按钮**——浏览器跑套件→提交→状态刷新）、`/projects/:id/assessment`、`/projects/:id/ide`（终端/测试/事件页签 + 调试/实验画布 + AI Mentor）。
 - **可视化引擎**（`src/viz/`，P3.1-P3.3，D24-D26）：`sceneSchema.ts`（TeachingScene zod：sourceType 三分类 runtime/static/conceptual + 来源标签；dataBinding；components；allowedInteractions）；`registry.ts`（L1 组件注册表，重复注册抛错）；`SceneRenderer.tsx`（schema 校验 + 查表渲染 + 多组件纵向组合 + **trace 头部（运行时间/指纹缩写）与过期横幅**）；组件：`consoleTimeline.tsx` 与 `variablesState.tsx`（observe() 声明式观察，D25）；场景：单组件 ×2 + L2 组合 debug-panel。
 - **版本绑定（§14.3，D26）**：`lib/fingerprint.ts`（执行内容 SHA-256 指纹，无 subtle 时 FNV-1a 降级）；runStore `trace`（traceId/指纹/路径/时间）；运行时写入 trace，code-run/tests-run 学习事件携带 traceId；IdePage 持续比对草稿指纹与单文件运行指纹，不一致时画布显示"数据已过期"横幅（旧执行数据不冒充当前）。服务器 codeVersion（已保存状态）与执行指纹（草稿）两层语义并存。
 - **学习事件（前端）**：`lib/eventTracker.ts` 批量缓冲（满 5 条或 30s flush，失败保留队列重试，队列上限 50）上报 code-run/tests-run；服务端事件（保存/诊断/规划）由后端产生；IDE 事件页签实时展示（类型徽标 + 摘要 + 序号，可刷新）。
-- **AI Mentor 面板**：真实教学回合（发送问题 → 回复气泡带 intent/H 级徽标、目标概念与 token 用量，降级决策带标记）；**"答案级帮助（H4）"显式勾选**（勾选才可能获得 H4，事件记录 answerRequested）；历史加载；503 显示"AI 未配置"配置指引；失败错误可见。
+- **AI Mentor 面板**：真实教学回合（发送问题 → 回复气泡带 intent/H 级徽标、目标概念与 token 用量，降级决策带标记）；**"答案级帮助（H4）"显式勾选**（勾选才可能获得 H4，事件记录 answerRequested）；历史加载；503 显示"AI 未配置"配置指引；失败错误可见；Motion Primitives 消息进入；服务端真实 propose-patch 含代码且目标已打开时，可用 Monaco DiffEditor 只读比较，不自动应用。
 - **AI 介入**：IDE 顶栏三模式切换（安静/自适应/引导，PATCH 持久化，失败回滚）；运行/测试失败后自动拉取 suggestions——满足条件时在编辑区顶部显示**非阻塞建议条**（可忽略），Quiet 模式后端直接返回 null。
 - **API 层**：`src/api/client.ts` 统一 fetch 封装（`ApiError` 错误映射，网络失败有可读提示）；`src/api/projects.ts`、`src/api/files.ts` 所有响应过 zod 校验。
 - **类型契约**：`src/types/`（project.ts、file.ts，barrel 导出）与后端 Pydantic 镜像。
@@ -121,11 +123,16 @@ OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
   - `runToTerminal.ts` 把单文件运行粘合到终端面板；`runTestSuite.ts` 拉取项目全部测试文件（当前打开文件的未保存草稿优先）逐个执行并聚合到测试面板（文件级错误如实记 error）。
 - **测试面板**（`runStore`/`testStore`）：按文件分组展示用例通过/失败与失败断言消息、合计与进度、运行中状态、页签自动切换、拒绝并发。测试结果当前仅内存展示（持久化属于学习证据 P2.7）。
 - **教学 IDE**（`src/pages/IdePage.tsx`）：
-  - CSS Grid 三列布局，四种工作模式（编程/调试/实验/架构）切换面板组合与列宽；
+  - DockviewReact 8.4.1（MIT）提供自由停靠：文件/任务/历史/编辑器/画布/导师/终端/测试/学习事件 9 个独立面板，拖动拆分/标签合并、缩放、页内悬浮、显隐、停靠组专注、恢复预设；四模式与每个项目独立 localStorage 保存。`WorkspaceLayoutContext` 提供菜单/命令/文件打开/运行入口共用控制器，动作读取 ideUiStore 实时锁定；锁定阻止拖动/缩放及布局改变。`lib/dockLayout.ts` 校验存储面板白名单/树结构并剥离业务参数，存储错误明示；稳定 portal 宿主避免模式切换/移位/隐藏卸载 Monaco 和导师输入。屏幕外渲染内容以 overflow-clip 隔离，避免焦点滚动顶栏；未接入 Enterprise 键盘模块；
   - Monaco Editor 本地打包（无 CDN，monaco 0.5x 原生 URL-worker 由 Vite 处理），按扩展名推断语言；
   - 文件树来自服务器（`project_files`），支持新建/重命名/删除；编辑器保存 = PUT 到服务器（Ctrl+S），并有 **2.5s 防抖自动保存**（停止输入后触发，失败错误可见，可按项目关闭）；“历史”页签展示当前文件的快照（时间/大小/哈希缩写、内容预览截断 5000 字符、恢复前确认）；项目详情页元信息显示当前 codeVersion；运行 = 浏览器 Worker 沙箱（Ctrl+Enter，运行草稿内容、不要求先保存；测试文件时按钮语义切换为「▶ 测试」并运行整个套件）；
-  - 底部终端/测试面板为真实功能（终端：运行输出流；测试：套件结果）；学习事件页签与 AI Mentor、执行/教学/架构画布为**标注未实现阶段**的占位。
-- **测试**：`src/__tests__/` — 契约、API 客户端、IDE 状态、文件 hook（含自动保存防抖/关闭）、文件历史 hook、运行器（node:vm 真实执行 Worker 脚本文本、测试运行时、FakeWorker 协议/超时、套件聚合）、仪表盘组件（98 个用例）。
+  - 底部 xterm + FitAddon 展示真实浏览器 Worker 输出（远程 Shell 明确未连接 / P4）；测试套件结果、学习事件和 AI Mentor 已接真实管线；调试/实验画布渲染真实执行时间线/变量与指纹；架构图仍为明确未实现的占位。
+- **前端组件层**：shadcn 原组件源码位于 `components/ui/upstream/`，`Button/Card/PanelTabs` 提供业务兼容包装；Radix/cmdk 负责通用交互；统一 `index.css` token。AppShell 提供真实页面导航；路由、终端、Diff、知识图懒加载。AppearanceProvider/MotionConfig/useUiReducedMotion 结合用户与系统偏好管理动效；Magic UI BlurFade 仅用于项目卡片。
+- **界面设置**：`appearanceStore` 保存经过 zod 校验的版本化浏览器外观，与服务器 AI 偏好、项目 Dockview 布局分离；`lib/appearance.ts` 映射共享 CSS token、字号/密度与可读强调色，`AppearanceProvider` 在 layout effect 应用。SettingsButton 在 AppShell/IDE 内挂载 Radix SettingsDialog，IDE 内自然获取 WorkspaceLayoutContext，显隐/重置服从实时锁定。Monaco 定义稳定主题并订阅配色；Editor/Diff 选项和 xterm 实例 options 实时更新、不更换模型或丢失缓冲。设置打开期间暂停文件保存/运行全局组合键；字体使用本机安装字体与回退，不下载字体。
+- **页面滚动边界**：非 IDE 的 AppShell 使用固定 100dvh；侧栏与顶栏不随正文滚动，`app-page-content` 占剩余高度，以有名称、可键盘聚焦的 region 承载 overflow-y-auto。短内容不制造整页溢出，长内容/手机可滚动正文；外层 overflow-clip 避免焦点带动整页，保留其他工作区和弹窗各自滚动。
+- **知识图**：ConceptsPage 的列表/图切换；ConceptGraph 用 React Flow 和按需 ELK layered 布局真实概念/先修关系，掌握证据无则明确标注；Controls/MiniMap、拖动、缩放、节点详情定位；不编辑知识库。知识图与 runtime Visual Engine 分工，后者仍使用已有 SceneRenderer。
+- **快照与单文件转译补充**：历史 hook 随已保存 updatedAt 刷新，Monaco Diff 只读；TS 编译为 CommonJS 后包进局部 exports 的 async 函数并 await，支持种子 export 与完成顺序，不提供跨文件模块解析。
+- **测试**：`src/__tests__/` — 契约、API、状态与权限、文件/快照 hook、Worker 真实脚本执行、页面与公共控件交互；本轮 32 个文件 / 191 个用例。组件/许可证/性能与浏览器验收记录见 `UI_COMPONENTS.md`。
 
 ## 4. 关键横切约定
 

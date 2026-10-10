@@ -4,6 +4,23 @@
 
 ---
 
+## D30 · 执行层语言无关架构：Profile + Backend 路由 + esbuild-wasm 多文件打包
+
+**背景**：P4.2a 要求多文件 TypeScript 运行与跨文件测试，且最终必须支持 Python 和 C++。不允许把执行系统设计成 TypeScript 专用。
+
+**决策**：
+- **语言无关契约**（`lib/execution/types.ts`）：ExecutionRequest（mode/entryPoint/testPaths/files/languageId）→ ExecutionResult（ok/buildDiagnostics/runtimeDiagnostics/output/testResults/modules/buildTimeMs/runTimeMs/codeFingerprint）；Diagnostic（severity/message/file/line/source: build|runtime|test）；信任级 practice/formal 由 Backend 声明（browser=practice，remote=formal）。
+- **LanguageProfile**（`lib/execution/LanguageProfile.ts`）：纯数据记录（extensions/testPattern/moduleSystem/supportedBackends），不含运行逻辑。TypeScript 完整注册；**Python/C++ Profile 已定义但 supportedBackends=[]**——execute() 会抛 UnsupportedExecutionError，不伪造运行能力。
+- **ExecutionBackend**（`lib/execution/ExecutionBackend.ts`）：策略接口（backendId/capabilities/canHandle/execute/prepare?）。registry 按 Profile→Backend 路由；扩展新语言 = 注册 Profile + 实现 Backend，零修改 Curriculum/Learner/TeachingScene。
+- **TypeScript BrowserBackend**（`backends/browserWorker.ts`）：适配现有 runner 基础设施——单文件 ts-compiler 转译 / 多文件 esbuild-wasm 打包（VFS 插件、路径安全、扩展名补全、npm 包拒绝、编译计时）→ Worker 沙箱执行（console/observe/test 运行时注入）。maxTrustLevel=practice。
+- **Remote Backend 占位**（`backends/remoteStub.ts`）：createRemoteBackendStub() 工厂 + REMOTE_BACKEND_IDS（remote-pytest/remote-cmake/remote-sandbox）；canHandle=false → 不会被 registry 选中；实现时只需改为 true 并实现 execute()。
+- **多文件打包**（`runner/bundler.ts`）：esbuild-wasm 懒加载（首次多文件运行下载 ~14MB WASM，后续复用）；虚拟 FS 插件按需返回文件内容；路径规范化禁止 `..` 越界；模块不存在时报错定位到 importer 文件。
+- **单文件兼容**：`runFile.ts` 的 `prepareScript(path, content, vfs?)` 无 VFS 时始终走单文件转译（含 export 语句），旧调用零破坏。
+
+**影响**：Python/C++ 扩展路径已铺好（Profile 定义 → 实现 Backend → 注册），无需重构执行层；esbuild-wasm 增加首次运行延迟（~10s WASM 加载），后续复用；试点课程测试文件已改为 `import { parseHeadings } from './headings'` 跨文件引用——transform.test.ts 真正导入三个模块（headings + inline + transform），transform.ts 起始代码 import 而非复制前两任务实现。
+
+---
+
 ## D29 · 任务驱动教学闭环：试点课程 + 任务级测试绑定 + practice 信任级
 
 **背景**：P4.1 要求"创建→诊断→路线→IDE→任务→编码→测试→AI 提示→修正→完成→下一任务"全流程真实运行。关键约束：客户端自报测试结果不可视为正式验收（设计 §6.5/§2.3 三种完成状态不可混淆）。

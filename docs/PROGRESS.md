@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-11（P4.1 试点课程任务驱动教学闭环）
+更新时间：2026-10-11（P4.2a 多文件 TypeScript 运行与跨文件测试，含语言无关执行架构）
 
 ## 已完成（经过验证）
 
@@ -238,6 +238,32 @@
   → 3 任务+6 文件自动种子 → 测试文件含 describe/it → 全绿 done[practice] →
   失败 needs-fix → 越界警告 → js.strings application 维 estimate=0.67 →
   事件 trustLevel=practice）
+
+- [x] **P4.2a 多文件 TypeScript 运行 + 跨文件测试 + 语言无关执行架构**（D30）
+  - **执行层**（`lib/execution/`）：语言无关契约（ExecutionRequest/Result/
+    Diagnostic/TrustLevel）+ LanguageProfile（TS/Python/C++ 注册表，Python/
+    C++ supportedBackends=[] 不伪造）+ ExecutionBackend 接口 + registry
+    路由（UnsupportedExecutionError 处理不支持语言）
+  - **TypeScript BrowserBackend**：单文件 ts-compiler 转译 / 多文件
+    esbuild-wasm 打包 → Worker 沙箱；maxTrustLevel=practice
+  - **esbuild-wasm 多文件打包**（`runner/bundler.ts`）：VFS 插件 + 路径
+    规范化（禁越界）+ 扩展名补全 + npm 包拒绝 + 编译计时；WASM 懒加载
+    （~14MB，部署 public/esbuild.wasm，首次运行后复用）
+  - **Remote Backend 占位**：remote-pytest/remote-cmake 接口已定义，
+    canHandle=false 不被选中；实现时改为 true 并实现 execute()
+  - **试点课程跨文件测试**：headings.test.ts `import { parseHeadings }
+    from './headings'`；transform.test.ts 导入三个模块；transform.ts
+    起始代码 import 前两任务实现（不复制）；**单文件模式兼容**（无 VFS
+    时 prepareScript 始终走单文件转译，旧调用零破坏）
+  - **IdePage 接入**：runTaskTests 通过 execute() 统一入口 → 构建 VFS →
+    路由到 browser-worker 后端 → 跨文件 import 解析 → 逐用例反馈
+- [x] 验证：前端 vitest **227 全过**（新增 execution 15：Profile 注册/
+  路由/多文件执行[验收 A]/模块不存在[D]/npm 包[H]/跨文件测试[B/E]；
+  单文件 runFile 测试零回归——export 语句无 VFS 时正确单文件转译）；
+  后端 pytest **126 全过** + PG 4 全过；typecheck/build 全过；**E2E 冒烟**
+  全通（创建项目 → 生成计划种子 6 个 parser 文件 → headings.test.ts 含
+  import → transform.test.ts 3 个 import → transform.ts import 前两模块
+  → 任务评估 done+practice → 学习证据 application 维）
 
 ### P1 验证汇总
 

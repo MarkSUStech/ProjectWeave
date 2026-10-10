@@ -129,32 +129,59 @@ function IdeWorkspace({ project }: { project: Project }) {
     void loadPlanTasks()
   }, [loadPlanTasks])
 
-  // 任务测试运行：只跑任务绑定的测试文件（当前草稿优先），返回逐文件结果
+  // 任务测试运行：通过统一执行层（P4.2a 语言无关架构）。
+  // 构建 VFS → execute() → 路由到 browser-worker 后端 → 跨文件 import 解析。
   const runTaskTests = useCallback(
     async (testPaths: string[]): Promise<TestFileResult[]> => {
-      const results: TestFileResult[] = []
-      for (const path of testPaths) {
-        try {
-          const raw = openPath === path ? draftContent : (await readFile(project.id, path)).content
-          const { runTests } = await import('../lib/runner/runJavaScript')
-          const outcome = await runTests(raw, {
-            onEntry: (level, text) => useRunStore.getState().appendEntry(level, `[${path}] ${text}`),
-          })
-          results.push({
-            path,
-            status: outcome.result.ok && outcome.cases.every((c) => c.status === 'passed')
-              ? 'passed'
-              : outcome.result.ok ? 'failed' : 'error',
-            error: outcome.result.ok ? undefined : outcome.result.error,
-            cases: outcome.cases,
-          })
-        } catch (err) {
-          results.push({ path, status: 'error', error: err instanceof Error ? err.message : String(err), cases: [] })
+      // 构建 VFS：全部项目文件（当前草稿优先于服务器内容）
+      const vfs = new Map<string, string>()
+      if (files) {
+        for (const file of files) {
+          try {
+            const content = openPath === file.path ? draftContent : (await readFile(project.id, file.path)).content
+            vfs.set(file.path, content)
+          } catch { /* 文件读取失败不阻塞其他文件 */ }
         }
       }
-      return results
+
+      const { execute, UnsupportedExecutionError } = await import('../lib/execution')
+      try {
+        const result = await execute({
+          mode: 'test',
+          testPaths,
+          files: vfs,
+          languageId: 'typescript',
+        })
+        // 输出到终端（构建信息 + 测试输出）
+        if (result.buildTimeMs > 0) {
+          useRunStore.getState().appendEntry('system', `模块打包 ${result.buildTimeMs}ms（${result.modules.length} 个模块）`)
+        }
+        for (const out of result.output) {
+          useRunStore.getState().appendEntry(out.level, out.text)
+        }
+        for (const diag of result.buildDiagnostics) {
+          useRunStore.getState().appendEntry('error', `[构建] ${diag.file ? `${diag.file}: ` : ''}${diag.message}`)
+        }
+        return (result.testResults ?? []).map((file) => ({
+          path: file.path,
+          status: file.status,
+          error: file.error,
+          cases: file.cases.map((c) => ({
+            name: c.name, status: c.status, error: c.error, durationMs: c.durationMs,
+          })),
+        }))
+      } catch (err) {
+        if (err instanceof UnsupportedExecutionError) {
+          useRunStore.getState().appendEntry('error', err.message)
+        }
+        return testPaths.map((path) => ({
+          path, status: 'error' as const,
+          error: err instanceof Error ? err.message : String(err),
+          cases: [],
+        }))
+      }
     },
-    [project.id, openPath, draftContent],
+    [project.id, openPath, draftContent, files],
   )
 
   const handleRestoreSnapshot = useCallback(
