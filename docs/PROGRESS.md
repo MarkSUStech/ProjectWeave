@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-11（P4.2b 远程执行沙箱与 Python 支持，D32/D33）
+更新时间：2026-10-11（P4.2c C++20 多文件编译与执行，D34/D35）
 
 ## 已完成（经过验证）
 
@@ -364,3 +364,45 @@
       前端 vitest **246 全过**（新增 19：executions API/远程后端映射/
       runRemote 胶水/路由更新）+ typecheck/build 全过；真实 uvicorn 冒烟
       （import+stdin 912ms、取消、容器清理）通过；TS 原路径零回归
+
+### P4.2c C++20 多文件编译与执行（D34/D35）
+
+- [x] **沙箱工作区策略（D34）**：`SandboxSpec.exec_workspace`/`tmpfs_size_mb`
+      服务端声明（客户端不可触达）；C++ 挂 exec tmpfs（256MB）执行编译产物，
+      Python 保持 noexec 不变；其余隔离（禁网/只读根/非 root/cap-drop/
+      no-new-privileges/资源限额/标签清理）对 C++ 完全一致（E2E 实测）；
+      方案比较（语言专属 exec tmpfs vs build/run 两容器）记录于 ADR
+- [x] **C++ 工具链镜像**：`backend/sandbox/cpp/Dockerfile`——Debian
+      bookworm 固定版本（clang 15.0.6 / cmake 3.25.1 / ninja 1.11.1 /
+      libstdc++ 12 + python3 仅驱动运行时），非 root、无密钥
+- [x] **CppRunner + cpp_driver**（遵守 LanguageRunner 协议，公共服务零改动）：
+      - 源集策略（确定性纯函数）：run = 入口 + 全部非测试翻译单元（多 main
+        交链接器报真实错误，不拼接源文件）；test = 测试 + 非测试且内容启发式
+        排除含 `int main(` 的源（避免多 main 链接冲突）
+      - 编译参数服务端固定 `-std=c++20 -O0 -g -Wall -Wextra`（不拼接用户命令）
+      - 诊断解析：clang 行诊断（file:line:col）+ 链接符号缺失（GNU ld/lld
+        双格式，/sandbox/work 前缀归一化）→ source='build'；运行崩溃信号
+        （SIGSEGV 等）→ source='runtime'；编译失败 run 阶段显式 skipped
+      - CMake 最小支持：CMakeLists 存在 → cmake -G Ninja 配置+构建包含入口
+        源文件的目标（解析 add_executable，回退目标名=入口去扩展名约定）；
+        配置/编译/链接/运行失败经 phases 与诊断区分；test 模式忽略 CMake
+        走直接编译（不假装支持 CTest 全量语义）
+      - 测试约定：每测试文件=独立可执行程序；通过=退出 0 且有输出；干净退出
+        非零=failed（断言失败）；崩溃/超时/编译失败/空输出=error（空测试
+        不判通过）；测试元数据（名称/退出码/时长/失败信息/文件）完整
+      - 产物以继承 stdout/stderr 流式运行（终端实时可见、取消即时生效）
+- [x] **前端**：远程传输层抽为 `remoteShared.ts`（create/poll/cancel/映射 +
+      createRemoteBackend 工厂，诊断按 build/runtime/test 分类映射）；
+      remotePython 薄封装 + 新 remoteCpp（一行工厂调用）；cppProfile→
+      remote-cpp；运行/测试按 Profile 自动语言分发（canRunPath/
+      isRemoteExecutable 泛化）；Monaco 补 .cpp/.hpp 语言映射；
+      **Mentor recentRunResult 改为最近运行的真实终端摘要**（编译诊断/
+      traceback 语言无关可见，H0-H4 机制不变，区分编译/链接/运行/测试/超时）
+- [x] 验证：后端 pytest **180 全过**（新增 cpp_runner 纯单元 18：诊断双格式
+      解析/源集选择/CMake 目标解析/映射/buildSpec exec 声明）；**C++ Docker
+      E2E 13 个全过**（A 单文件/B 多翻译单元/C 缺头文件诊断 file:line:col/
+      D 链接错误符号/D 运行崩溃 SIGSEGV/E stdin/F 无限循环超时清理零遗留/
+      G 测试成败+空测试+编译失败/H CMake+Ninja 多文件+配置失败区分/I 编译
+      失败不报成功[K 复测]）；Python E2E 11 复跑全过（无回归）；PG 4 全过；
+      前端 **247 全过**（路由/胶水测试更新：C++ 路由 remote-cpp）+ typecheck/
+      build 全过；TS 浏览器路径零回归

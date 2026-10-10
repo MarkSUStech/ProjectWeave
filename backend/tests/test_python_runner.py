@@ -26,12 +26,13 @@ def spec(mode="run", entry="src/main.py", files=None, test_paths=None, stdin="")
 # ---------------------------------------------------------------- validate
 
 
-def test_validate_rejects_non_py_and_missing_entry():
-    errors = runner.validate_files(spec(files={"src/main.js": "x"}))
-    assert any(".py" in e for e in errors)
+def test_validate_rejects_non_py_entry_and_missing_entry():
+    # 入口非 .py 被拒；项目数据文件（如 README.md）放行
+    errors = runner.validate_files(spec(files={"README.md": "x"}, entry="src/main.py", test_paths=[]))
+    assert errors == [] or all("README" not in e for e in errors)
 
-    errors = runner.validate_files(spec(mode="run", entry=None))
-    assert any("entryPoint" in e for e in errors)
+    errors = runner.validate_files(spec(files={"src/main.js": "x"}, entry="src/main.js"))
+    assert any("入口" in e for e in errors)
 
     errors = runner.validate_files(spec(mode="test", entry=None, test_paths=[]))
     assert any("测试文件" in e for e in errors)

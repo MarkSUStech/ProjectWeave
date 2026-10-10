@@ -2,15 +2,17 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
-vi.mock('../lib/execution/backends/remotePython', () => ({
+vi.mock('../lib/execution/backends/remoteShared', () => ({
   executeRemoteWithStream: vi.fn(),
   cancelActiveRemoteExecution: vi.fn(async () => 'exec-1'),
   remoteExecutionErrorMessage: vi.fn((err: unknown) => (err instanceof Error ? err.message : String(err))),
-  remotePythonBackendId: 'remote-pytest',
+  remoteBackendIdForLanguage: vi.fn((lang: string) => (lang === 'python' ? 'remote-pytest' : lang === 'cpp' ? 'remote-cpp' : null)),
+  getActiveRemoteExecutionId: vi.fn(() => null),
+  createRemoteBackend: vi.fn(() => ({})),
 }))
 
-import { runRemoteInTerminal, runRemoteTestsInTerminal, canRunPath, isAnyTestPath, stopRemoteExecution } from '../lib/runner/runRemote'
-import { executeRemoteWithStream } from '../lib/execution/backends/remotePython'
+import { runRemoteInTerminal, runRemoteTestsInTerminal, canRunPath, isAnyTestPath, isRemoteExecutable, stopRemoteExecution } from '../lib/runner/runRemote'
+import { executeRemoteWithStream } from '../lib/execution/backends/remoteShared'
 import { useRunStore } from '../stores/runStore'
 import { ApiError } from '../api/client'
 
@@ -48,7 +50,7 @@ beforeEach(() => {
   useRunStore.setState({ running: false, stdin: '', activeExecutionId: null, trace: null })
 })
 
-describe('canRunPath / isAnyTestPath', () => {
+describe('canRunPath / isAnyTestPath / isRemoteExecutable', () => {
   it('Python 与 TS 均可执行；Python 测试文件按 test_*.py 识别', () => {
     expect(canRunPath('src/main.ts')).toBe(true)
     expect(canRunPath('src/main.js')).toBe(true)
@@ -57,6 +59,17 @@ describe('canRunPath / isAnyTestPath', () => {
     expect(isAnyTestPath('src/a.test.ts')).toBe(true)
     expect(isAnyTestPath('tests/test_math.py')).toBe(true)
     expect(isAnyTestPath('src/mathlib.py')).toBe(false)
+  })
+
+  it('C++ 可执行；测试文件按 *_test.cpp / test_*.cpp 识别', () => {
+    expect(canRunPath('src/main.cpp')).toBe(true)
+    expect(canRunPath('src/math.cc')).toBe(true)
+    expect(canRunPath('src/math.hpp')).toBe(true) // Profile 声明了 .hpp 扩展 → 可执行判定放行（运行时入口校验兜底）
+    expect(isAnyTestPath('tests/math_test.cpp')).toBe(true)
+    expect(isAnyTestPath('tests/test_math.cxx')).toBe(true)
+    expect(isAnyTestPath('src/math.cpp')).toBe(false)
+    expect(isRemoteExecutable('src/main.cpp')).toBe(true)
+    expect(isRemoteExecutable('src/main.ts')).toBe(false)
   })
 })
 

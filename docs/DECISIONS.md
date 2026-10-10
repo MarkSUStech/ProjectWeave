@@ -452,3 +452,33 @@
 **取舍**：驱动随每次执行注入 tar（多 ~6KB/次，换取镜像纯净与驱动可升级）；`__pw` 为保留命名空间防用户文件覆盖驱动。
 
 **验证**：python_runner 纯单元 13 个（tar 结构/traceback/pytest 映射/超时标记）；E2E 覆盖多文件 import、pytest 成败定位（断言行号而非 def 行）、收集错误。
+
+## D34 · 编译型语言的可执行工作区：语言专属 exec tmpfs（服务端规格）
+
+**日期**：2026-10-11。
+
+**背景**：D32 的沙箱工作区是 noexec tmpfs（Python 足够）；C++ 必须执行编译产物，但 `noexec` 下二进制无法运行。
+
+**方案比较**：
+- A. **语言专属 exec tmpfs**：`SandboxSpec.exec_workspace`（服务端 Runner 构造时声明）→ C++ 挂 `/sandbox` 为 exec tmpfs（256MB）。零额外容器、零宿主中转、清理面不变；exec 范围仍限于一次性容器内。
+- B. build/run 两容器：二进制经宿主临时文件/docker cp 中转。冷启动×2、需管两个容器生命周期与中转文件的清理；安全增益有限（产物本就只活在一次性容器里）。
+
+**决策**：选 A。安全敏感策略（exec 与否、tmpfs 大小）只在服务端 `SandboxSpec` 中声明，客户端请求无法触达；Python 保持 noexec 不变；其余隔离（禁网/只读根/非 root/cap-drop/no-new-privileges/资源限额/标签清理）对 C++ 完全一致（E2E 实测 shadow 拒读、根只读、超时/取消零遗留）。
+
+**验证**：C++ E2E 13 个（A-I/K）+ Python E2E 11 个复跑全过；两镜像下安全限制行为一致。
+
+## D35 · CppRunner：确定性源集策略 + CMake 目标解析 + 可执行测试约定
+
+**日期**：2026-10-11。
+
+**决策**：
+- **源集选择（driver 内纯函数，可离线测试）**：run = 入口 + 全部非测试翻译单元（多 main 交给链接器报真实错误，不拼接源文件模拟）；test = 测试文件 + 非测试且**内容启发式排除含 `int main(` 的源**（避免多 main 链接冲突——确定性正则，非 LLM）。
+- **编译参数服务端固定**：`-std=c++20 -O0 -g -Wall -Wextra -fdiagnostics-color=never`，绝不拼接用户命令；无 CMakeLists 时直接 clang++ 多翻译单元链接。
+- **CMake 最小支持**：存在 CMakeLists.txt → `cmake -G Ninja` 配置 + `cmake --build --target`；目标解析 = 包含入口源文件的 `add_executable`（正则解析），未命中回退"目标名=入口去扩展名"约定；配置/编译/运行失败经 phases 与诊断区分；test 模式忽略 CMake 走直接编译（不假装支持 CTest 全量语义）。
+- **测试约定**：每个测试文件 = 独立可执行程序；**通过 = 退出 0 且有输出**（输出即断言痕迹）；干净退出非零 = failed（断言失败），崩溃/超时/编译失败/空输出 = error——空测试不得判通过（练习信任级下也不当证据）。
+- **诊断分类**：clang 行诊断（file:line:col）与链接符号缺失（GNU ld/lld 双格式，含源位置归一化）→ `source: 'build'`；运行崩溃信号（SIGSEGV 等）→ `source: 'runtime'`；测试断言 → `source: 'test'`；编译失败时 run 阶段显式 `skipped`，绝不报告成功。
+- **流式输出**：编译产物以继承 stdout/stderr 直接运行（`_run_streaming`），终端实时可见、取消即时生效（早期 capture_output 版本导致输出憋到进程结束，已修）。
+- 镜像：Debian bookworm 固定版本（clang 15.0.6 / cmake 3.25.1 / ninja 1.11.1 + python3 仅驱动运行时）；GCC Profile 未来以同协议另注册。
+- 教学联动：Mentor 的 recentRunResult 改为最近一次运行的真实终端摘要（编译诊断/traceback 语言无关可见），诊断带文件行号供 H1-H3 启发式辅导；executionId/指纹/DAP 预留兼容。
+
+**验证**：cpp_runner 纯单元 18 个（诊断解析双格式/源集/目标解析/映射/buildSpec exec 声明）；C++ Docker E2E 13 个全过；前端 247（路由/胶水测试更新）。

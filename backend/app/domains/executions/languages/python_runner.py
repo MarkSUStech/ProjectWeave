@@ -114,10 +114,8 @@ class PythonRunner(LanguageRunner):
     image = "projectweave-sandbox-python:3.12"
 
     def validate_files(self, spec: ExecutionSpecInput) -> list[str]:
+        """入口/测试必须 .py；其余文件视为项目数据放行（容器内只是数据）。"""
         errors: list[str] = []
-        for path in spec.files:
-            if not path.endswith(".py"):
-                errors.append(f"Python 执行只允许 .py 文件：{path}")
         if spec.mode == "run":
             if not spec.entry_point:
                 errors.append("run 模式必须提供 entryPoint")

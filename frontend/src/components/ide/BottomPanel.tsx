@@ -186,10 +186,10 @@ export function TestView({ onRun }: { onRun: () => void }) {
 
   if (results.length === 0 && !running) {
     return (
-      <PlaceholderState
-        title="测试面板"
-        description="约定 *.test.ts / *.test.js 为测试文件（提供 describe / it / expect 断言）。项目存在测试文件后，点击「运行测试」在浏览器 Worker 沙箱中执行。"
-      >
+        <PlaceholderState
+          title="测试面板"
+          description="TS：*.test.ts/js 在浏览器 Worker 沙箱执行；Python（test_*.py）与 C++（*_test.cpp）经服务端 Docker 沙箱运行。项目存在测试文件后，点击「运行测试」。"
+        >
         <Button size="sm" variant="outline" onClick={onRun} className="mt-2">
           ▶ 运行测试
         </Button>

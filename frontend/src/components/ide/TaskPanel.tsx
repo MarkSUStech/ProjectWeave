@@ -62,7 +62,8 @@ export function TaskPanel({
       const result = await evaluateTask(projectId, currentTask.taskId, {
         files,
         traceId: trace?.traceId ?? null,
-        source: trace?.backend === 'remote-pytest' ? 'remote' : 'browser',
+        // executionId 存在 = 服务端沙箱执行（python/cpp），否则浏览器 Worker
+        source: trace?.executionId ? 'remote' : 'browser',
         executionId: trace?.executionId ?? null,
       })
       setEvaluation(result)

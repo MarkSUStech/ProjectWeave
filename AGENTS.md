@@ -29,9 +29,9 @@ backend/    FastAPI + SQLAlchemy + Alembic（Python 3.10+）
       settings/ models / service / router（AI 介入模式偏好）
       executions/ models / schemas / router（远程执行会话 API，P4.2b）
                 service（生命周期编排 + 校验 + 资源上限）
-                sandbox/（SandboxManager 协议 + Docker 一次性容器）
-                languages/（LanguageRunner 协议 + PythonRunner + python_driver）
-  sandbox/     沙箱镜像 Dockerfile 与说明（python/ = CPython 3.12 + pytest）
+                sandbox/（SandboxManager 协议 + Docker 一次性容器 + 语言专属 exec 策略）
+                languages/（LanguageRunner 协议 + PythonRunner/CppRunner + 各自 driver）
+  sandbox/     沙箱镜像 Dockerfile 与说明（python/ = CPython 3.12 + pytest；cpp/ = Clang 15 + CMake + Ninja）
   app/ai/     LLM Provider Adapter（deepseek 真实 / mock 仅测试 / disabled）
   migrations/   Alembic
   tests/        pytest
@@ -80,14 +80,15 @@ PW_TEST_DATABASE_URL=postgresql+psycopg2://projectweave:projectweave@localhost:5
 
 套件默认 skip；会自动创建并清理 `projectweave_pytest` 库。
 
-# 远程执行沙箱（P4.2b，Python 需要）
+# 远程执行沙箱（P4.2b/P4.2c，Python 与 C++ 需要）
 
 ```bash
-docker build -t projectweave-sandbox-python:3.12 sandbox/python   # 一次性构建镜像
-PW_SANDBOX_E2E=1 .venv/Scripts/python.exe -m pytest tests/test_executions_docker_e2e.py -v  # 真实 Docker 验收（默认 skip）
+docker build -t projectweave-sandbox-python:3.12 sandbox/python                # Python 镜像（一次性）
+docker build -t projectweave-sandbox-cpp:clang15-bookworm sandbox/cpp          # C++ 镜像（一次性）
+PW_SANDBOX_E2E=1 .venv/Scripts/python.exe -m pytest tests/test_executions_docker_e2e.py tests/test_executions_cpp_e2e.py -v  # 真实 Docker 验收（默认 skip）
 ```
 
-无 Docker/镜像时创建执行返回 503（明确报错，不伪造）。隔离参数与配置见 `sandbox/README.md`。
+无 Docker/镜像时创建执行返回 503（明确报错，不伪造）。隔离参数、工作区执行策略（Python noexec / C++ exec，D34）与配置见 `sandbox/README.md`。
 
 ## 4. 开发流程（严格增量迭代）
 

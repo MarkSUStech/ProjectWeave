@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getProject } from '../api/projects'
 import { ApiError } from '../api/client'
@@ -21,8 +21,8 @@ import { useProjectFiles } from '../hooks/useProjectFiles'
 import { useFileHistory } from '../hooks/useFileHistory'
 import { runFileInTerminal } from '../lib/runner/runToTerminal'
 import { runTestSuite } from '../lib/runner/runTestSuite'
-import { runRemoteInTerminal, runRemoteTestsInTerminal, canRunPath, isAnyTestPath } from '../lib/runner/runRemote'
-import { detectLanguage, isTestFile } from '../lib/execution/LanguageProfile'
+import { runRemoteInTerminal, runRemoteTestsInTerminal, canRunPath, isAnyTestPath, isRemoteExecutable } from '../lib/runner/runRemote'
+import { detectLanguage } from '../lib/execution/LanguageProfile'
 import { trackClientEvent } from '../lib/eventTracker'
 import { fetchSuggestion } from '../api/tutor'
 import type { TutorDecision } from '../types/tutor'
@@ -235,19 +235,20 @@ function IdeWorkspace({ project }: { project: Project }) {
 
   const handleRunTests = useCallback(async () => {
     if (!files) return
-    // Python 项目：测试文件走远程沙箱（P4.2b）；TS 项目维持浏览器套件。
-    const pythonTests = files.filter((f) => detectLanguage(f.path) === 'python' && isTestFile(f.path, 'python'))
-    if (pythonTests.length > 0) {
+    // 远程语言（Python/C++）：测试文件走远程沙箱；TS 项目维持浏览器套件。
+    const remoteTests = files.filter((f) => isRemoteExecutable(f.path) && isAnyTestPath(f.path))
+    if (remoteTests.length > 0) {
       layout?.reveal('tests')
       useTestStore.getState().setRunning(true)
-      useTestStore.getState().resetResults(pythonTests.length)
+      useTestStore.getState().resetResults(remoteTests.length)
+      const language = detectLanguage(remoteTests[0].path) ?? 'python'
       try {
         const outcome = await runRemoteTestsInTerminal(
-          pythonTests.map((f) => f.path),
+          remoteTests.map((f) => f.path),
           (await buildProjectVfs()) ?? new Map(),
           { projectId: project.id },
         )
-        // trace 里的逐文件结果写回测试面板
+        // 会话快照里的逐文件结果写回测试面板
         const { getExecution } = await import('../api/executions')
         if (outcome.executionId) {
           const snap = await getExecution(outcome.executionId)
@@ -270,7 +271,7 @@ function IdeWorkspace({ project }: { project: Project }) {
         const failed = results.reduce((sum, f) => sum + f.cases.filter((c) => c.status !== 'passed').length, 0)
         trackClientEvent(
           'tests-run',
-          { files: pythonTests.length, passed: totalCases - failed, failed, traceId: outcome.traceId, language: 'python' },
+          { files: remoteTests.length, passed: totalCases - failed, failed, traceId: outcome.traceId, language },
           { projectId: project.id },
         )
         void maybeFetchSuggestion(failed > 0)
@@ -299,9 +300,10 @@ function IdeWorkspace({ project }: { project: Project }) {
       void handleRunTests()
       return
     }
-    // Python 文件：远程沙箱执行（P4.2b）；测试文件（test_*.py）走远程 pytest。
-    if (detectLanguage(openPath) === 'python') {
-      const isPyTest = isTestFile(openPath, 'python')
+    // 远程语言（Python/C++）：沙箱执行；测试文件（test_*.py / *_test.cpp）走远程测试。
+    if (isRemoteExecutable(openPath)) {
+      const isRemoteTest = isAnyTestPath(openPath)
+      const language = detectLanguage(openPath) ?? 'python'
       const startedAt = Date.now()
       layout?.reveal('terminal')
       void buildProjectVfs().then((vfs) => {
@@ -310,11 +312,11 @@ function IdeWorkspace({ project }: { project: Project }) {
           return { status: 'error' as const, traceId: null, executionId: null, exitCode: null, ok: false }
         }
         const options = { projectId: project.id }
-        return isPyTest ? runRemoteTestsInTerminal([openPath], vfs, options) : runRemoteInTerminal(openPath, vfs, options)
+        return isRemoteTest ? runRemoteTestsInTerminal([openPath], vfs, options) : runRemoteInTerminal(openPath, vfs, options)
       }).then((outcome) => {
         trackClientEvent(
-          isPyTest ? 'tests-run' : 'code-run',
-          { path: openPath, status: outcome.status, durationMs: Date.now() - startedAt, traceId: outcome.traceId, language: 'python' },
+          isRemoteTest ? 'tests-run' : 'code-run',
+          { path: openPath, status: outcome.status, durationMs: Date.now() - startedAt, traceId: outcome.traceId, language },
           { projectId: project.id },
         )
         void maybeFetchSuggestion(outcome.status !== 'ok')
@@ -352,6 +354,24 @@ function IdeWorkspace({ project }: { project: Project }) {
     runTrace.runPath === openPath &&
     draftFingerprint !== null &&
     runTrace.fingerprint !== draftFingerprint
+
+  // Mentor 上下文：最近一次运行的真实失败摘要（编译诊断/traceback 来自终端条目，
+  // 语言无关——TS/Python/C++ 的错误行都会以 error 条目出现）。
+  const terminalEntries = useRunStore((s) => s.entries)
+  const mentorRunSummary = useMemo(() => {
+    if (terminalEntries.length === 0) return null
+    const lastRunIdx = terminalEntries.reduce(
+      (acc, e, i) => (e.kind === 'system' && e.text.startsWith('▶') ? i : acc), -1)
+    const slice = terminalEntries.slice(lastRunIdx >= 0 ? lastRunIdx + 1 : -15)
+    if (slice.length === 0) return null
+    const hasError = slice.some((e) => e.kind === 'error')
+    const summary = slice
+      .slice(-10)
+      .map((e) => e.text)
+      .join('\n')
+      .slice(0, 600)
+    return { status: hasError ? 'error' : 'ok', summary }
+  }, [terminalEntries])
 
   const editor = (
     <EditorPanel
@@ -417,7 +437,7 @@ function IdeWorkspace({ project }: { project: Project }) {
         editor: editorWithSuggestion, canvas,
         mentor: <MentorPanel projectId={project.id} currentFile={openPath ? { path: openPath, content: draftContent } : undefined}
           onApplyPatch={applyPatch} currentTaskId={currentTaskId}
-          recentRunResult={runTrace ? { status: 'ok', summary: `最近运行 ${new Date(runTrace.at).toLocaleTimeString('zh-CN', { hour12: false })}` } : null} />,
+          recentRunResult={mentorRunSummary} />,
         terminal: <TerminalView />, tests: <TestView onRun={() => void handleRunTests()} />,
         events: <EventsView projectId={project.id} />,
       }} />

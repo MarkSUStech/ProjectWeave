@@ -10,20 +10,31 @@ import {
   cancelActiveRemoteExecution,
   executeRemoteWithStream,
   remoteExecutionErrorMessage,
-} from '../execution/backends/remotePython'
-import { detectLanguage, isTestFile } from '../execution/LanguageProfile'
+  remoteBackendIdForLanguage,
+} from '../execution/backends/remoteShared'
+import { detectLanguage, getProfile, isTestFile } from '../execution/LanguageProfile'
 import { isRunnablePath, isTestPath } from './runFile'
 import type { VirtualFS } from '../execution/types'
 import type { RunStatus } from '../../types/runner'
 
-/** 文件是否可执行（浏览器 js/ts 或远程 Python）。 */
-export function canRunPath(path: string): boolean {
-  return isRunnablePath(path) || detectLanguage(path) === 'python'
+/** 语言是否具备远程执行后端（按 Profile 声明，自动覆盖未来语言）。 */
+export function isRemoteExecutable(path: string): boolean {
+  const lang = detectLanguage(path)
+  if (lang === null || lang === 'typescript') return false
+  const profile = getProfile(lang)
+  return (profile?.supportedBackends.length ?? 0) > 0
 }
 
-/** 是否为测试文件（TS 约定或 Python test_*.py）。 */
+/** 文件是否可执行（浏览器 js/ts 或远程语言）。 */
+export function canRunPath(path: string): boolean {
+  return isRunnablePath(path) || isRemoteExecutable(path)
+}
+
+/** 是否为测试文件（TS 约定或远程语言的测试命名，如 test_*.py / *_test.cpp）。 */
 export function isAnyTestPath(path: string): boolean {
-  return isTestPath(path) || isTestFile(path, 'python')
+  if (isTestPath(path)) return true
+  const lang = detectLanguage(path)
+  return lang !== null && isTestFile(path, lang)
 }
 
 export interface RemoteRunOutcome {
@@ -77,9 +88,17 @@ async function runRemoteMode(args: {
     return { status: 'error', traceId: null, executionId: null, exitCode: null, ok: false }
   }
 
+  // 语言由入口/首个测试文件推断（传输层语言无关，服务端按语言路由 Runner）
+  const probePath = args.entryPoint ?? args.testPaths[0] ?? ''
+  const languageId = detectLanguage(probePath)
+  if (languageId === null || languageId === 'typescript' || !remoteBackendIdForLanguage(languageId)) {
+    return { status: 'error', traceId: null, executionId: null, exitCode: null, ok: false }
+  }
+  const backendId = remoteBackendIdForLanguage(languageId)!
+  const engineLabel = languageId === 'cpp' ? 'C++ · Clang 15 / C++20' : 'Python 3.12'
   const target = args.mode === 'run' ? args.entryPoint : `${args.testPaths.length} 个测试文件`
   store.setActiveTab('terminal')
-  store.appendEntry('system', `▶ ${args.mode === 'run' ? '运行' : '测试'} ${target}（远程沙箱 · Python 3.12）`)
+  store.appendEntry('system', `▶ ${args.mode === 'run' ? '运行' : '测试'} ${target}（远程沙箱 · ${engineLabel}）`)
 
   const traceId = crypto.randomUUID()
   const content = args.entryPoint ? (args.files.get(args.entryPoint) ?? '') : ''
@@ -95,7 +114,7 @@ async function runRemoteMode(args: {
     fingerprint: contentFingerprint,
     runPath: args.entryPoint ?? null,
     at: new Date().toISOString(),
-    backend: 'remote-pytest',
+    backend: backendId,
     executionId: null,
   })
   useRunStore.getState().setRunning(true)
@@ -108,7 +127,7 @@ async function runRemoteMode(args: {
         entryPoint: args.entryPoint,
         testPaths: args.testPaths,
         files: args.files,
-        languageId: 'python',
+        languageId,
         timeoutMs: args.timeoutMs,
         codeFingerprint: contentFingerprint,
         stdin,
@@ -127,7 +146,7 @@ async function runRemoteMode(args: {
       fingerprint: contentFingerprint,
       runPath: args.entryPoint ?? null,
       at: new Date().toISOString(),
-      backend: 'remote-pytest',
+      backend: backendId,
       executionId: extras.executionId,
     })
 
@@ -139,7 +158,14 @@ async function runRemoteMode(args: {
       useRunStore.getState().appendEntry('error', `✘ 执行超时（${extras.runTimeMs}ms），沙箱已终止`)
       return { status: 'timeout', traceId, executionId: extras.executionId, exitCode: null, ok: false }
     }
-    // 诊断（traceback → 文件:行号）
+    // 构建诊断（编译/链接错误 → 文件:行:列）
+    for (const diag of result.buildDiagnostics) {
+      const where = diag.file
+        ? `${diag.file}${diag.line ? `:${diag.line}` : ''}${diag.column ? `:${diag.column}` : ''}`
+        : ''
+      useRunStore.getState().appendEntry('error', `[构建] ${where ? `${where} ` : ''}${diag.message}`)
+    }
+    // 运行诊断（traceback / 崩溃信号 / 取消）
     for (const diag of result.runtimeDiagnostics) {
       const where = diag.file ? `${diag.file}${diag.line ? `:${diag.line}` : ''}` : ''
       useRunStore.getState().appendEntry('error', `${where ? `[${where}] ` : ''}${diag.message}`)

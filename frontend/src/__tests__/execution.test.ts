@@ -25,7 +25,6 @@ import {
   isTestFile,
   listProfiles,
   selectBackend,
-  UnsupportedExecutionError,
 } from '../lib/execution'
 
 const { runJavaScript, runTests } = await import('../lib/runner/runJavaScript')
@@ -50,10 +49,11 @@ describe('LanguageProfile', () => {
     expect(py!.supportedBackends).toEqual(['remote-pytest'])
   })
 
-  it('C++ Profile 已定义但无可用后端', () => {
+  it('C++ Profile 已定义并路由到远程沙箱后端（P4.2c 真实支持）', () => {
     const cpp = getProfile('cpp')
     expect(cpp).toBeDefined()
-    expect(cpp!.supportedBackends).toEqual([])
+    expect(cpp!.sourceExtensions).toContain('cpp')
+    expect(cpp!.supportedBackends).toEqual(['remote-cpp'])
   })
 
   it('根据文件扩展名检测语言', () => {
@@ -103,11 +103,12 @@ describe('执行路由', () => {
     expect(backend.capabilities.maxTrustLevel).toBe('practice')
   })
 
-  it('C++ 请求抛出"无可用后端"', async () => {
-    const vfs = new Map([['main.cpp', 'int main() { return 0; }']])
-    await expect(
-      execute({ mode: 'run', entryPoint: 'main.cpp', files: vfs, languageId: 'cpp' }),
-    ).rejects.toThrow(UnsupportedExecutionError)
+  it('C++ 请求路由到 remote-cpp 后端（多文件编译执行）', () => {
+    const vfs = new Map([['src/main.cpp', 'int main() { return 0; }']])
+    const backend = selectBackend({ mode: 'run', entryPoint: 'src/main.cpp', files: vfs, languageId: 'cpp' })
+    expect(backend.backendId).toBe('remote-cpp')
+    expect(backend.capabilities.multiFile).toBe(true)
+    expect(backend.capabilities.maxTrustLevel).toBe('practice')
   })
 
   it('未知语言抛出错误', async () => {

@@ -83,6 +83,9 @@ class DockerSandboxManager:
     # --- 运行 ---------------------------------------------------------------
 
     def _run_args(self, spec: SandboxSpec) -> list[str]:
+        # 工作区执行策略由服务端 Runner 声明（D34）：
+        # 解释型语言（Python）保持 noexec；编译型语言（C++）需要执行编译产物。
+        tmpfs_mode = "exec" if spec.exec_workspace else "noexec"
         return [
             self._docker, "run",
             "--name", spec.container_name,
@@ -90,9 +93,9 @@ class DockerSandboxManager:
             "--label", f"{LABEL_EXEC}={spec.exec_id}",
             # 网络：默认完全禁止
             "--network", "none",
-            # 文件系统：只读根 + 唯一可写 tmpfs（属主=运行用户，禁止执行二进制）
+            # 文件系统：只读根 + 唯一可写 tmpfs（属主=运行用户）
             "--read-only",
-            "--tmpfs", "/sandbox:rw,noexec,size=64m,uid=10001,gid=10001,mode=0770",
+            "--tmpfs", f"/sandbox:rw,{tmpfs_mode},size={spec.tmpfs_size_mb}m,uid=10001,gid=10001,mode=0770",
             # 身份与权限
             "--user", "10001:10001",
             "--cap-drop", "ALL",

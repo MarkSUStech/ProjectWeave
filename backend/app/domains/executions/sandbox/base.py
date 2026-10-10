@@ -33,7 +33,11 @@ class SandboxResult:
 
 @dataclass
 class SandboxSpec:
-    """启动一个一次性沙箱所需的全部输入（语言无关）。"""
+    """启动一个一次性沙箱所需的全部输入（语言无关）。
+
+    安全策略（exec 工作区 / tmpfs 大小）只能由服务端 LanguageRunner
+    构造时声明——客户端请求无法触达本结构（D34）。
+    """
 
     image: str
     # 完整容器命令参数（由 LanguageRunner 构造），如 ["sh", "-c", "..."]
@@ -43,6 +47,10 @@ class SandboxSpec:
     exec_id: str
     # 以 tar.gz（gzip）流写入容器 stdin 的文件包（可为 None）。
     stdin_archive: bytes | None = None
+    # 工作区是否允许执行二进制（编译型语言需要；解释型语言保持 noexec）。
+    exec_workspace: bool = False
+    # 工作区 tmpfs 大小（MB）。
+    tmpfs_size_mb: int = 64
     # 资源限制（由执行服务统一给出，Runner 不决定）。
     memory_mb: int = 512
     cpus: float = 1.0

@@ -47,16 +47,16 @@ export const pythonProfile: LanguageProfile = {
 }
 
 /**
- * C++ Profile（P4.2a 仅定义元数据，不伪造运行能力）。
- * 支持后端为空 → registry 会返回"不支持"错误。
+ * C++ Profile（P4.2c 起由 remote-cpp 后端真实支持：
+ * 服务端 Docker 沙箱 Clang 15 / C++20，多翻译单元 + 可选 CMake+Ninja）。
  */
 export const cppProfile: LanguageProfile = {
   languageId: 'cpp',
   displayName: 'C++',
-  sourceExtensions: ['cpp', 'cc', 'cxx', 'c', 'h', 'hpp'],
-  testFilePattern: /_test\.cpp$|test_.*\.cpp$/,
+  sourceExtensions: ['cpp', 'cc', 'cxx', 'h', 'hpp', 'hh', 'hxx'],
+  testFilePattern: /_test\.(cpp|cc|cxx)$|test_.*\.(cpp|cc|cxx)$/,
   moduleSystem: 'cpp-include',
-  supportedBackends: [], // 待 remote-cmake 后端实现
+  supportedBackends: ['remote-cpp'],
   commentPrefix: '//',
 }
 

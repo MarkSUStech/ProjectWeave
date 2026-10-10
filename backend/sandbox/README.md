@@ -1,14 +1,15 @@
-# 远程执行沙箱（P4.2b）
+# 远程执行沙箱（P4.2b / P4.2c）
 
-## 构建 Python 沙箱镜像（一次性）
+## 构建沙箱镜像（一次性）
 
 ```bash
 # 仓库根目录执行
 docker build -t projectweave-sandbox-python:3.12 backend/sandbox/python
+docker build -t projectweave-sandbox-cpp:clang15-bookworm backend/sandbox/cpp
 ```
 
-镜像内容：`python:3.12-slim` + pytest 8.x（唯一预装依赖），非 root 运行用户
-（uid/gid 10001，无登录 shell），不内置任何密钥或服务端配置。
+- **Python 镜像**：`python:3.12-slim` + pytest 8.x（唯一预装依赖），非 root（uid/gid 10001），无密钥。
+- **C++ 镜像**：Debian bookworm 固定工具链（clang/clang++ 15.0.6、cmake 3.25.1、ninja 1.11.1、libstdc++ 12）+ python3（仅运行注入的执行驱动），同样非 root、无密钥。
 
 未构建镜像 / Docker 未运行时，`POST /api/v1/executions` 返回 **503** 与
 修复提示，不伪造执行结果。
@@ -20,7 +21,8 @@ docker build -t projectweave-sandbox-python:3.12 backend/sandbox/python
 | 措施 | 参数 |
 |---|---|
 | 禁止网络 | `--network none` |
-| 只读根文件系统 | `--read-only` + 唯一可写区 `/sandbox`（tmpfs，`noexec`，64MB，属主 10001） |
+| 只读根文件系统 | `--read-only` + 唯一可写区 `/sandbox`（tmpfs，属主 10001） |
+| 工作区执行策略 | **语言专属**（D34）：Python `noexec`；C++ `exec`（编译产物需执行，256MB tmpfs）——由服务端 `SandboxSpec.exec_workspace` 声明，客户端不可控 |
 | 非 root | `--user 10001:10001` |
 | 权限收紧 | `--cap-drop ALL` + `--security-opt no-new-privileges` |
 | 资源上限 | `--memory 512m --cpus 1 --pids-limit 128` |
@@ -32,6 +34,15 @@ docker build -t projectweave-sandbox-python:3.12 backend/sandbox/python
 程序 stdin 来自请求（随 manifest 一次性提交，非交互）。
 
 服务启动时后台线程清理遗留容器（`pw.sandbox=1` 标签过滤）。
+
+## C++ 执行约定（D35）
+
+- 编译参数服务端固定：`-std=c++20 -O0 -g -Wall -Wextra -fdiagnostics-color=never`。
+- 无 CMakeLists.txt：入口 + 全部非测试翻译单元 → clang++ 链接为真实可执行程序。
+- 有 CMakeLists.txt（run 模式）：`cmake -G Ninja` 配置 + 构建包含入口源文件的目标
+  （解析 `add_executable`，未命中回退"目标名 = 入口去扩展名"）。
+- 测试：每个测试文件编译为独立可执行程序；**通过 = 退出 0 且有输出**；
+  干净退出非零 = 断言失败；崩溃/超时/编译失败/空输出 = error（空测试不判通过）。
 
 ## 安全边界声明（重要）
 
@@ -63,9 +74,9 @@ docker build -t projectweave-sandbox-python:3.12 backend/sandbox/python
 
 ```bash
 cd backend
-PW_SANDBOX_E2E=1 .venv/Scripts/python.exe -m pytest tests/test_executions_docker_e2e.py -v
+PW_SANDBOX_E2E=1 .venv/Scripts/python.exe -m pytest tests/test_executions_docker_e2e.py tests/test_executions_cpp_e2e.py -v
 ```
 
-覆盖任务验收场景 A-G/J（hello 运行 / 多文件 import / stdin / pytest 成败 /
-收集错误 / 无限循环超时清理 / 宿主文件与网络封锁 / 只读根 / 取消与零遗留）。
-默认（无环境变量）跳过，CI/无 Docker 环境不依赖。
+分别覆盖 Python（验收 A-G/J）与 C++（验收 A-I/K：单文件/多翻译单元/缺头文件
+诊断/链接错误/stdin/超时清理/测试成败与空测试/CMake+Ninja/编译失败不报成功/
+容器封锁/取消零遗留）。默认（无环境变量）跳过。

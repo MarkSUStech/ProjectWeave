@@ -164,7 +164,7 @@ def test_execution_finished_event_appended(client: TestClient, fake_sandbox, db_
         ({"files": {"src/ma:in.py": "x"}, "entryPoint": "src/ma:in.py"}, "非法字符"),
         ({"files": {"__pw/manifest.json": "x"}}, "保留命名空间"),
         ({"entryPoint": "src/missing.py"}, "不在 files"),
-        ({"files": {"src/main.js": "x"}}, ".py"),
+        ({"files": {"src/main.js": "x"}, "entryPoint": "src/main.js"}, "入口文件必须是 .py"),
         ({"timeoutMs": 60000}, "超时上限"),
         ({"mode": "test", "entryPoint": None, "testPaths": []}, "testPaths"),
         ({"stdin": "x" * 70000}, "stdin"),

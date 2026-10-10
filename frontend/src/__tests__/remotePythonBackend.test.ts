@@ -160,7 +160,7 @@ describe('executeRemoteWithStream', () => {
     mockedCancel.mockResolvedValue({ id: '00000000-0000-4000-8000-000000000004', status: 'cancelled', alreadyFinished: false })
     const promise = executeRemoteWithStream(runRequest)
     const assertion = expect(promise).rejects.toThrow('轮询超时')
-    await vi.advanceTimersByTimeAsync(125_000)
+    await vi.advanceTimersByTimeAsync(185_000)
     await assertion
     expect(mockedCancel).toHaveBeenCalled()
     vi.useRealTimers()
