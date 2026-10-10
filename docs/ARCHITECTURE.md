@@ -5,7 +5,7 @@
 ## 1. 总体形态
 
 模块化单体：一个 FastAPI 后端 + 一个 React SPA + 一个关系数据库。
-六大引擎中已实现：**Project Engine 基础部分**、**Learner Engine 的知识图谱、初始诊断与掌握模型**、**Curriculum Engine 的样板课程规划**、**学习事件信封**、**Tutor Engine**（DeepSeek 真实接入 + Policy Gate + H4 门控 + 介入三模式）、**Visual Interaction Engine 地基**（场景 Schema + 组件注册表 + SceneRenderer + console-timeline L1 组件）。**P2 教学闭环全部交付，P3 已启动。**
+六大引擎中已实现：**Project Engine 基础部分**、**Learner Engine 的知识图谱、初始诊断与掌握模型**（understanding + application 两维有真实证据）、**Curriculum Engine 的样板课程规划与阶段验收**、**学习事件信封**、**Tutor Engine**（DeepSeek 真实接入 + Policy Gate + H4 门控 + 介入三模式）、**Visual Interaction Engine**（场景 Schema + 组件注册表 + SceneRenderer + 时间线/变量状态组件 + 版本绑定）。**P2 教学闭环与 P3.1-3.3/3.5 已交付。**
 
 ```
 ┌─────────────────────────┐      /api/v1 (JSON)       ┌──────────────────────────┐
@@ -44,8 +44,8 @@
 - **领域模块** `app/domains/curriculum/`（P2.4，Curriculum Engine 的样板课程规划）：
   - `models.py`：`project_tasks`（样板任务图：依赖/知识要求/交付物/effort）与 `learning_plans`（版本化活动/跳过/原因 JSON）。
   - `templates.py`：样板课程六任务模板（附录 B 映射，确定性）。
-  - `service.py`：任务图种子（幂等）、依赖拓扑排序（含环检测）、规则化规划器（知识要求→先修闭包；掌握判定复用 D19 阈值→跳过带原因/学习活动带原因；practice-task 始终保留）、replan 版本递增且历史保留。
-  - `router.py`：`GET /plans/{projectId}`（无则生成 v1，返回 plan+tasks）、`POST /plans/{projectId}/replan`。
+  - `service.py`：任务图种子（幂等）、依赖拓扑排序（含环检测）、规则化规划器（知识要求→先修闭包；掌握判定复用 D19 阈值→跳过带原因/学习活动带原因；practice-task 始终保留）、replan 版本递增且历史保留、**`evaluate_task` 阶段验收**（依赖闸门 422 + 确定性 rubric suite-green-v1：套件全绿→done / 否则→needs-fix）。
+  - `router.py`：`GET /plans/{projectId}`（无则生成 v1，返回 plan+tasks）、`POST /plans/{projectId}/replan`、**`POST /projects/{id}/tasks/{taskId}/evaluate`**（router 编排：coding 证据→application 维 + task-evaluated 事件）。
 - **领域模块** `app/domains/events/`（P2.7，学习事件信封）：
   - `models.py`：`learning_events` 表（event_id 唯一幂等键、aggregate_id+sequence 复合索引、payload JSONB ≤4KB、类型白名单：file-saved/plan-generated/plan-replanned/assessment-submitted/code-run/tests-run）。
   - `service.py`：`append_event`（白名单/payload 校验、eventId 幂等跳过、aggregate 序列分配）、`server_event_id`（uuid5 确定性 id，重放自动去重）、按项目/类型查询。
@@ -90,6 +90,7 @@
 | GET | /api/v1/mastery | 当前用户的概念掌握估计（四维中仅有证据的维度） |
 | GET | /api/v1/plans/{projectId} | 当前学习路线（无则生成 v1；含任务图与活动/跳过原因） |
 | POST | /api/v1/plans/{projectId}/replan | 重新规划（版本递增，历史保留） |
+| POST | /api/v1/projects/{id}/tasks/{taskId}/evaluate | 阶段验收（套件全绿→done，否则 needs-fix；依赖未完成 422；写 coding 证据与事件） |
 | POST | /api/v1/events | 批量上报学习事件（类型白名单，eventId 幂等，≤20 条） |
 | GET | /api/v1/events?projectId=&type=&limit= | 学习事件查询（倒序，≤200 条） |
 | POST | /api/v1/tutor/turns | 教学回合（含 requestAnswerLevel 的 H4 门控；未配置 503） |
@@ -102,7 +103,7 @@ OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
 ## 3. 前端（frontend/）
 
 - **技术**：React 19 + TypeScript（strict）+ Vite 8 + Tailwind CSS v4（`@theme` 令牌化深色主题）+ Zustand（persist）+ zod。
-- **路由**：`/`（仪表盘：项目列表 + 创建表单 + 知识图谱入口）、`/concepts`（知识图谱浏览页：域分组、先修/目标/评估方式展开、理解维掌握徽标叠加）、`/projects/:id`（详情 + 能力诊断卡片 + **学习路线卡片**：活动与原因、跳过折叠区、版本与重新规划 + 里程碑任务图）、`/projects/:id/assessment`（诊断：逐题作答 → 概念三档结果 + 逐题回顾）、`/projects/:id/ide`（教学 IDE，底部三页签真实：终端/测试/学习事件；"调试"画布 = L2 组合场景 [时间线+变量状态]，"实验"画布 = 变量状态场景）。
+- **路由**：`/`（仪表盘）、`/concepts`（知识图谱 + 掌握徽标）、`/projects/:id`（详情 + 诊断 + 学习路线 + **里程碑任务卡：状态徽标（含"需修正"）与「测试验收」按钮**——浏览器跑套件→提交→状态刷新）、`/projects/:id/assessment`、`/projects/:id/ide`（终端/测试/事件页签 + 调试/实验画布 + AI Mentor）。
 - **可视化引擎**（`src/viz/`，P3.1-P3.3，D24-D26）：`sceneSchema.ts`（TeachingScene zod：sourceType 三分类 runtime/static/conceptual + 来源标签；dataBinding；components；allowedInteractions）；`registry.ts`（L1 组件注册表，重复注册抛错）；`SceneRenderer.tsx`（schema 校验 + 查表渲染 + 多组件纵向组合 + **trace 头部（运行时间/指纹缩写）与过期横幅**）；组件：`consoleTimeline.tsx` 与 `variablesState.tsx`（observe() 声明式观察，D25）；场景：单组件 ×2 + L2 组合 debug-panel。
 - **版本绑定（§14.3，D26）**：`lib/fingerprint.ts`（执行内容 SHA-256 指纹，无 subtle 时 FNV-1a 降级）；runStore `trace`（traceId/指纹/路径/时间）；运行时写入 trace，code-run/tests-run 学习事件携带 traceId；IdePage 持续比对草稿指纹与单文件运行指纹，不一致时画布显示"数据已过期"横幅（旧执行数据不冒充当前）。服务器 codeVersion（已保存状态）与执行指纹（草稿）两层语义并存。
 - **学习事件（前端）**：`lib/eventTracker.ts` 批量缓冲（满 5 条或 30s flush，失败保留队列重试，队列上限 50）上报 code-run/tests-run；服务端事件（保存/诊断/规划）由后端产生；IDE 事件页签实时展示（类型徽标 + 摘要 + 序号，可刷新）。

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getProject } from '../api/projects'
-import { getCodeVersion } from '../api/files'
+import { getCodeVersion, listFiles } from '../api/files'
 import { listProjectAssessments } from '../api/assessments'
 import { getPlan, replan } from '../api/plans'
+import { evaluateTask } from '../api/tasks'
+import { runTestSuite } from '../lib/runner/runTestSuite'
+import { useRunStore } from '../stores/runStore'
 import { ApiError } from '../api/client'
 import type { Project } from '../types/project'
 import type { CodeVersionInfo } from '../types/file'
@@ -81,6 +84,38 @@ export default function ProjectDetailPage() {
       setReplanning(false)
     }
   }, [id, replanning])
+
+  // 阶段验收（P3.5）：浏览器跑项目全部测试 → 提交结果 → 后端确定性判定。
+  const [evaluatingTaskId, setEvaluatingTaskId] = useState<string | null>(null)
+  const [evaluationError, setEvaluationError] = useState<string | null>(null)
+  const handleEvaluate = useCallback(
+    async (taskId: string) => {
+      if (!id || evaluatingTaskId !== null) return
+      setEvaluatingTaskId(taskId)
+      setEvaluationError(null)
+      try {
+        const files = await listFiles(id)
+        const summary = await runTestSuite(id, files)
+        const traceId = useRunStore.getState().trace?.traceId ?? null
+        await evaluateTask(id, taskId, {
+          totalFiles: summary.totalFiles,
+          totalPassed: summary.totalPassed,
+          totalFailed: summary.totalFailed,
+          errorFiles: summary.errorFiles,
+          traceId,
+        })
+        // 刷新计划（任务状态）与诊断/证据相关数据
+        setPlan(await getPlan(id))
+      } catch (err) {
+        setEvaluationError(
+          err instanceof ApiError ? err.message : '验收失败：测试运行或提交出错，请重试',
+        )
+      } finally {
+        setEvaluatingTaskId(null)
+      }
+    },
+    [id, evaluatingTaskId],
+  )
 
   useEffect(() => {
     void load()
@@ -312,14 +347,48 @@ export default function ProjectDetailPage() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-[11px] text-ink-faint">M{task.milestone}</span>
-                    <Badge tone={task.status === 'done' ? 'ok' : 'neutral'}>
-                      {task.status === 'done' ? '已完成' : task.status === 'in-progress' ? '进行中' : '待开始'}
+                    <Badge
+                      tone={
+                        task.status === 'done'
+                          ? 'ok'
+                          : task.status === 'needs-fix'
+                            ? 'danger'
+                            : task.status === 'in-progress'
+                              ? 'info'
+                              : 'neutral'
+                      }
+                    >
+                      {task.status === 'done'
+                        ? '已完成'
+                        : task.status === 'needs-fix'
+                          ? '需修正'
+                          : task.status === 'in-progress'
+                            ? '进行中'
+                            : '待开始'}
                     </Badge>
                   </div>
                   <div className="mt-1 text-sm text-ink">{task.title}</div>
+                  {task.status !== 'done' && (
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        disabled={evaluatingTaskId !== null}
+                        onClick={() => void handleEvaluate(task.taskId)}
+                        className="rounded border border-edge px-2 py-1 text-[11px] text-ink-dim transition-colors hover:border-accent/50 hover:text-ink disabled:opacity-50"
+                        title="在浏览器运行项目全部测试并提交验收（套件全绿 = 通过）"
+                      >
+                        {evaluatingTaskId === task.taskId ? '测试与验收中…' : '▶ 测试验收'}
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ol>
+          )}
+          {evaluationError && (
+            <p role="alert" className="mt-2 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+              {evaluationError}
+            </p>
           )}
         </Card>
       </div>

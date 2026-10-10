@@ -15,6 +15,10 @@ vi.mock('../api/projects', () => ({
 }))
 vi.mock('../api/files', () => ({
   getCodeVersion: vi.fn().mockResolvedValue({ codeVersion: 'sha256:x', fileCount: 3 }),
+  listFiles: vi.fn().mockResolvedValue([]),
+}))
+vi.mock('../lib/runner/runTestSuite', () => ({
+  runTestSuite: vi.fn(),
 }))
 vi.mock('../api/assessments', () => ({
   listProjectAssessments: vi.fn().mockResolvedValue([]),

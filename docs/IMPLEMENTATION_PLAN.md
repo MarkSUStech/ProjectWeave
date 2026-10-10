@@ -53,7 +53,7 @@
 | 3.2 | 两类标准组件端到端（执行时间线 + 调用栈/变量状态） | 3.1 | ✅（console-timeline + variables-state；调用栈组件按需追加） |
 | 3.3 | 真实执行数据绑定（traceId + codeVersion 过期标记） | 3.2 | ✅（运行指纹 + 过期横幅；trace 数据库化留待远程沙箱） |
 | 3.4 | WorkspaceAction 权限等级（A0/A1/A2）+ 撤销与布局锁定联防 | 2.5 |
-| 3.5 | 阶段验收流程（/tasks/{id}/evaluate + rubric） | P2 |
+| 3.5 | 阶段验收流程（/tasks/{id}/evaluate + rubric） | P2 | ✅（MVP rubric=套件全绿；per-task 测试绑定待课程内容制作） |
 
 ## P4 打磨与试点 —— 完整用户旅程与学习效果测量
 

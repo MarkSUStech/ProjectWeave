@@ -42,3 +42,21 @@ class PlanTaskRead(APIModel):
 class PlanDetailRead(APIModel):
     plan: PlanRead
     tasks: list[PlanTaskRead]
+
+
+class EvaluationSuiteInput(APIModel):
+    """浏览器测试套件结果（由前端运行器采集后提交）。"""
+
+    totalFiles: int = Field(ge=0)
+    totalPassed: int = Field(ge=0)
+    totalFailed: int = Field(ge=0)
+    errorFiles: int = Field(ge=0)
+    traceId: str | None = Field(default=None, max_length=64)
+
+
+class EvaluationResultRead(APIModel):
+    taskId: str
+    status: str
+    passed: bool
+    rubricVersion: str
+    evidenceConcepts: list[str]

@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-10（P3.3 完成）
+更新时间：2026-10-10（P3.5 完成）
 
 ## 已完成（经过验证）
 
@@ -144,6 +144,18 @@
       缩写、trace 写入与 traceId 返回/新运行新 trace/不支持类型不写 trace、
       过期横幅与 trace 头部、旧用例适配新返回形状）；typecheck/build 通过；
       后端 111+PG4 零改动无回归
+- [x] **P3.5 阶段验收流程**：`POST /projects/{id}/tasks/{taskId}/evaluate`
+      ——前端「测试验收」按钮跑浏览器套件→提交结果（含 traceId）→后端
+      确定性 rubric（suite-green-v1：全绿→done，否则 needs-fix）+ 依赖闸门
+      （未完成 422）；**coding 证据 → application 维首次真实数据**（失败也
+      是证据）；task-evaluated 事件；详情页任务徽标含"需修正"；D27 记录
+      决策（任务级测试绑定待课程内容制作）
+- [x] 验证：SQLite pytest 117 个用例全过（验收 6：全绿 done+application 维/
+      失败 needs-fix+失败证据+修复重验收累积/errorFiles 判失败/空套件不通过/
+      依赖闸门与解锁/404）；PG 套件 4 个全过；前端 vitest 170 个全过
+      （evaluateTask API 2 + 详情页验收流 3：提交参数与状态刷新/422 可见/
+      done 后按钮隐藏）；typecheck/build 通过；TestClient 端到端冒烟全通
+      （闸门 422 → 全绿 done → application estimate=1.0 → 事件 passed）
 
 ### P1 验证汇总
 
@@ -153,9 +165,11 @@
 
 ## 未实现（明确标注，禁止伪装）
 
+- [ ] 任务级测试绑定（task.tests[] 与 per-task rubric）— 课程内容制作阶段
+- [ ] H4 之后的独立性迁移验证（验收证据已可引用，验证流程待设计）— P3.5+
+- [ ] 重规划将 application 维纳入掌握判定（当前仅 understanding）— P2.4 扩展
 - [ ] trace 落库（execution_traces 表）与服务器 codeVersion 双向关联 — 远程沙箱阶段
 - [ ] 调用栈标准组件（需真实调试器/插桩，不假装——D25 记录取舍）— P3.2+/P4
-- [ ] H4 之后的独立性迁移验证（依赖任务验收与 rubric）— P3.5
 - [ ] Guided 的阶段性检查/主动推进教学（需会话状态与更丰富证据）— P3+
 - [ ] 推送式建议（WebSocket）与忽略/暂停按钮的持久化 — P1.6+/P3
 - [ ] Tutor 只读工具调用（get_relevant_code/diagnostics 等）与流式输出 — P2.5+/P3

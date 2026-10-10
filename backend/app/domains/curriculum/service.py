@@ -67,6 +67,64 @@ def list_tasks(db: Session, project_id) -> list[ProjectTask]:
     )
 
 
+# ---------------------------------------------------------------------------
+# 阶段验收（设计 §2.3 任务实现通过 / §6.5 判定由确定性程序完成）
+# ---------------------------------------------------------------------------
+
+EVALUATION_RUBRIC_VERSION = "suite-green-v1"
+
+
+class TaskNotFoundError(PlanError):
+    def __init__(self, task_id: str) -> None:
+        super().__init__(f"task not found: {task_id}", status=404)
+
+
+def get_task(db: Session, project_id, task_id: str) -> ProjectTask:
+    task = db.scalar(
+        select(ProjectTask).where(
+            ProjectTask.project_id == project_id, ProjectTask.task_id == task_id
+        )
+    )
+    if task is None:
+        raise TaskNotFoundError(task_id)
+    return task
+
+
+def evaluate_task(
+    db: Session,
+    project_id,
+    task_id: str,
+    suite: "dict",
+) -> tuple[ProjectTask, bool, list[str]]:
+    """按测试套件结果做确定性验收。
+
+    MVP rubric（D27）：项目测试套件全绿（≥1 个测试文件、0 失败、0 文件级错误）
+    → 任务 done；否则 needs-fix。判定是程序而非 AI（设计 §6.5）。
+    返回 (任务, 是否通过, 依赖缺失列表)；依赖校验失败抛 PlanError(422)。
+    """
+    task = get_task(db, project_id, task_id)
+
+    # 依赖闸门：先修任务未完成时不可验收（设计 §5.3 任务图语义）
+    blocked: list[str] = []
+    by_id = {t.task_id: t for t in list_tasks(db, project_id)}
+    for dependency in task.depends_on or []:
+        dep_task = by_id.get(dependency)
+        if dep_task is None or dep_task.status != "done":
+            blocked.append(dependency)
+    if blocked:
+        raise PlanError(f"前置任务尚未完成：{', '.join(sorted(blocked))}", status=422)
+
+    total_files = int(suite.get("totalFiles", 0))
+    total_failed = int(suite.get("totalFailed", 0))
+    error_files = int(suite.get("errorFiles", 0))
+    passed = total_files >= 1 and total_failed == 0 and error_files == 0
+
+    task.status = "done" if passed else "needs-fix"
+    db.commit()
+    db.refresh(task)
+    return task, passed, blocked
+
+
 def get_current_plan(db: Session, project_id) -> LearningPlan | None:
     return db.scalar(
         select(LearningPlan)

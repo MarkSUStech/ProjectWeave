@@ -24,6 +24,7 @@ SERVER_EVENT_TYPES = {
     "assessment-submitted",  # 诊断提交
     "plan-generated",        # 学习路线首次生成
     "plan-replanned",        # 学习路线重新规划
+    "task-evaluated",        # 阶段任务验收（来源：evaluate 端点）
 }
 CLIENT_EVENT_TYPES = {
     "code-run",            # 浏览器运行（来源：前端上报）

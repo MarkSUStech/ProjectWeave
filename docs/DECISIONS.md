@@ -4,6 +4,20 @@
 
 ---
 
+## D27 · 阶段验收：浏览器测试结果提交 + 确定性 rubric（套件全绿）+ coding→application 证据
+
+**背景**：P3.5 落地任务验收（设计 §2.3/§6.5/§13.1）。判定必须由确定性程序完成，AI 口头评价不替代测试与 rubric；测试在浏览器沙箱执行（D11），后端无法自行运行。
+
+**决策**：
+- **流程**：前端在详情页点击「测试验收」→ 浏览器运行项目全部测试（复用 runTestSuite）→ `POST /projects/{id}/tasks/{taskId}/evaluate` 提交结果（totalFiles/passed/failed/errorFiles + traceId）→ 后端确定性判定与落库；
+- **rubric v1（suite-green）**：≥1 个测试文件、0 失败、0 文件级错误 → `done`；否则 `needs-fix`（新增状态值，前端徽标"需修正"）；**依赖闸门**：depends_on 未全部 done → 422（任务图语义，设计 §5.3）；
+- **证据**：通过/失败均为任务每个必需概念写 `coding` 证据（D19 映射 → **application 维首次真实数据**；失败也是证据，估计如实下降）；`task-evaluated` 事件入白名单（payload 含结果摘要与 traceId，与运行可关联）；
+- 任务级测试绑定（设计 §5.3 task.tests[]）留待课程内容制作——MVP 以项目套件整体为验收依据，界面 tooltip 已注明。
+
+**影响**：mastery 的 application 维开始积累，重规划可将 application 纳入掌握判定（当前仅 understanding，扩展点已在 D19 预留）；H4 后的独立性验证可引用验收证据；rubric 版本化（suite-green-v1）供后续演进对照。
+
+---
+
 ## D26 · 运行数据版本绑定：客户端执行指纹 + 过期横幅（§14.3 MVP）
 
 **背景**：可视化数据必须与产生它的代码版本绑定（设计 §14.3）；代码变更后画布不得把旧执行数据冒充当前执行。服务器 codeVersion 描述"已保存状态"，但浏览器运行执行的是**编辑器草稿**——两者语义不同。
