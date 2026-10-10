@@ -12,7 +12,7 @@ import { MentorPanel } from '../components/ide/MentorPanel'
 import { TerminalView, TestView, EventsView } from '../components/ide/BottomPanel'
 import { CanvasPlaceholder } from '../components/ide/CanvasPlaceholder'
 import { SceneRenderer } from '../viz/SceneRenderer'
-import { DEBUG_PANEL_SCENE, VARIABLES_STATE_SCENE } from '../viz/scenes'
+import { DEBUG_PANEL_SCENE, DEBUG_SNAPSHOT_SCENE, VARIABLES_STATE_SCENE } from '../viz/scenes'
 import { fingerprint } from '../lib/fingerprint'
 import { useIdeUiStore } from '../stores/ideUiStore'
 import { useRunStore } from '../stores/runStore'
@@ -32,6 +32,8 @@ import { WorkspaceViewMenu } from '../components/ide/WorkspaceViewMenu'
 import { CommandPalette } from '../components/ide/CommandPalette'
 import { WorkspaceNoticeStrip } from '../components/ide/WorkspaceNoticeStrip'
 import { TaskPanel } from '../components/ide/TaskPanel'
+import { DebugPanel } from '../components/ide/DebugPanel'
+import { useDebugStore } from '../stores/debugStore'
 import type { PatchApplyResult } from '../lib/workspace/executor'
 import type { PlanTask } from '../types/plan'
 import type { TestFileResult } from '../types/runner'
@@ -373,6 +375,53 @@ function IdeWorkspace({ project }: { project: Project }) {
     return { status: hasError ? 'error' : 'ok', summary }
   }, [terminalEntries])
 
+  // ---- 调试（P4.5a）：启动 / 暂停位置跳转 / Mentor 只读摘要 / 源码过期提示 ----
+  const debugSnapshot = useDebugStore((s) => s.snapshot)
+  const debugStart = useDebugStore((s) => s.start)
+  const debugStarting = useDebugStore((s) => s.starting)
+
+  const handleDebugStart = useCallback(async () => {
+    if (!openPath) return
+    const vfs = await buildProjectVfs()
+    if (!vfs) return
+    layout?.reveal('debug')
+    await debugStart({
+      entryPoint: openPath,
+      files: Object.fromEntries(vfs),
+      projectId: project.id,
+      codeFingerprint: draftFingerprint ?? undefined,
+    })
+  }, [openPath, buildProjectVfs, debugStart, layout, project.id, draftFingerprint])
+
+  // 暂停位置变化 → 自动打开对应源码文件（栈帧跳转同路径）
+  const pausedLocation = debugSnapshot?.status === 'paused' ? debugSnapshot.location : null
+  useEffect(() => {
+    if (pausedLocation?.file && pausedLocation.file !== openPath) {
+      void openFile(pausedLocation.file)
+    }
+  }, [pausedLocation?.file]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mentor 只读调试上下文（AI 不控制调试器；H0-H4 权限不变）
+  const debugContext = useMemo(() => {
+    if (!debugSnapshot || debugSnapshot.status === 'terminated') return null
+    const loc = debugSnapshot.location
+    const frames = debugSnapshot.stackFrames.slice(0, 5).map((f) => `${f.name} (${f.file ?? '?'}:${f.line ?? '?'})`)
+    const locals = debugSnapshot.scopes.find((s) => s.name === 'Locals')?.variables ?? []
+    const varsText = locals.slice(0, 10).map((v) => `${v.name} = ${v.value}`).join(', ')
+    return [
+      `[真实 LLDB 调试快照 · ${debugSnapshot.debuggerProfile}]`,
+      loc ? `暂停于 ${loc.file}:${loc.line}（${loc.frameName}，原因 ${debugSnapshot.stopReason}）` : `状态 ${debugSnapshot.status}`,
+      frames.length ? `调用栈：${frames.join(' <- ')}` : '',
+      varsText ? `局部变量：${varsText}` : '',
+    ].filter(Boolean).join('\n').slice(0, 900)
+  }, [debugSnapshot])
+
+  // 调试会话期间源码过期提示（验收 K）：会话指纹 vs 当前草稿指纹
+  const debugStale = useMemo(() => {
+    if (!debugSnapshot?.codeFingerprint || !draftFingerprint) return false
+    return debugSnapshot.codeFingerprint !== draftFingerprint
+  }, [debugSnapshot?.codeFingerprint, draftFingerprint])
+
   const editor = (
     <EditorPanel
       openPath={openPath}
@@ -385,6 +434,7 @@ function IdeWorkspace({ project }: { project: Project }) {
       onChange={setDraft}
       onSave={() => void save()}
       onRun={handleRun}
+      onDebugStart={() => void handleDebugStart()}
     />
   )
 
@@ -396,11 +446,21 @@ function IdeWorkspace({ project }: { project: Project }) {
           <Button size="sm" variant="ghost" onClick={() => setSuggestion(null)}>忽略</Button>
         </div>
       </motion.div>}
+      {debugStarting && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: reduced ? 0 : 0.2 }} className="shrink-0 overflow-hidden border-b border-accent/30 bg-accent-soft">
+        <div className="px-3 py-2 text-xs text-ink-dim"><span className="mr-2 text-accent">● 调试会话</span>正在编译并启动 LLDB（隔离沙箱）…</div>
+      </motion.div>}
+      {debugStale && debugSnapshot && debugSnapshot.status !== 'terminated' && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: reduced ? 0 : 0.2 }} className="shrink-0 overflow-hidden border-b border-warn/30 bg-warn/10">
+        <div className="px-3 py-2 text-xs text-warn">⚠ 源码已修改：调试数据来自启动会话时的快照（{debugSnapshot.debuggerProfile}），当前显示的变量/位置可能与编辑器内容不一致。</div>
+      </motion.div>}
     </AnimatePresence>
     {editor}
   </div>
   const canvas = mode === 'architecture' ? <CanvasPlaceholder kind="architecture" /> :
-    <SceneRenderer scene={mode === 'debugging' ? DEBUG_PANEL_SCENE : VARIABLES_STATE_SCENE} trace={runTrace} stale={canvasStale} />
+    <SceneRenderer
+      scene={debugSnapshot && debugSnapshot.status !== 'terminated' ? DEBUG_SNAPSHOT_SCENE : mode === 'debugging' ? DEBUG_PANEL_SCENE : VARIABLES_STATE_SCENE}
+      trace={runTrace}
+      stale={canvasStale || debugStale}
+    />
 
   // A2 补丁应用守卫（§10.2 用户内容优先）：目标文件必须已打开且无未保存更改，
   // 防止 AI 补丁覆盖用户正在编辑的草稿（自动保存 2.5s 内的输入也受保护）。
@@ -437,9 +497,12 @@ function IdeWorkspace({ project }: { project: Project }) {
         editor: editorWithSuggestion, canvas,
         mentor: <MentorPanel projectId={project.id} currentFile={openPath ? { path: openPath, content: draftContent } : undefined}
           onApplyPatch={applyPatch} currentTaskId={currentTaskId}
-          recentRunResult={mentorRunSummary} />,
+          recentRunResult={debugContext
+            ? { status: debugSnapshot?.status === 'paused' ? 'paused' : 'ok', summary: debugContext }
+            : mentorRunSummary} />,
         terminal: <TerminalView />, tests: <TestView onRun={() => void handleRunTests()} />,
         events: <EventsView projectId={project.id} />,
+        debug: <DebugPanel onOpenFile={(path) => void openFile(path)} />,
       }} />
     </div>
     <footer className="flex h-7 shrink-0 items-center justify-between border-t border-edge-soft bg-panel px-4 text-[11px] text-ink-faint">

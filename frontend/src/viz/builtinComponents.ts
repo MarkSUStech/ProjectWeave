@@ -5,6 +5,7 @@
 import { getComponent, registerComponent } from './registry'
 import { ConsoleTimelineView } from './components/consoleTimeline'
 import { VariablesStateView } from './components/variablesState'
+import { DebugSnapshotView } from './components/debugSnapshot'
 
 export function ensureBuiltinComponents(): void {
   if (getComponent('console-timeline')) return
@@ -25,5 +26,14 @@ export function ensureBuiltinComponents(): void {
     renderCapabilities: ['变量当前值', '变化序列', '多变量对比'],
     accessibilityDescription: '按变量名分组的真实值变化表，点击展开历史序列',
     View: VariablesStateView,
+  })
+  registerComponent({
+    componentId: 'debug-snapshot',
+    version: 'v1',
+    supportedConcepts: ['cpp.functions', 'cpp.recursion', 'js.functions'],
+    dataSources: ['debug:latest'],
+    renderCapabilities: ['真实暂停位置', '调用栈', '局部变量与变化'],
+    accessibilityDescription: '来自真实 LLDB 调试会话的执行位置、调用栈与变量状态，可点击选中栈帧',
+    View: DebugSnapshotView,
   })
 }

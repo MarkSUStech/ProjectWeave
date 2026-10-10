@@ -26,12 +26,15 @@ backend/    FastAPI + SQLAlchemy + Alembic（Python 3.10+）
       curriculum/ models / templates / service / router（任务图 + 学习路线规划）
       events/   models / service / router（学习事件信封，幂等 + 白名单）
       tutor/    models / service / router（教学回合 + Policy Gate + H4 门控 + 主动建议）
+      debugging/ models / schemas / router（DebugSession API，P4.5a）
+                service（状态机 + 看门狗 + 指令白名单）、dap_client（DAP 帧）、debug_sandbox（长生命周期容器）
       settings/ models / service / router（AI 介入模式偏好）
       executions/ models / schemas / router（远程执行会话 API，P4.2b）
                 service（生命周期编排 + 校验 + 资源上限）
                 sandbox/（SandboxManager 协议 + Docker 一次性容器 + 语言专属 exec 策略）
                 languages/（LanguageRunner 协议 + PythonRunner/CppRunner + 各自 driver）
-  sandbox/     沙箱镜像 Dockerfile 与说明（python/ = CPython 3.12 + pytest；cpp/ = Clang 15 + CMake + Ninja）
+  sandbox/     沙箱镜像 Dockerfile 与说明（python/ = CPython 3.12 + pytest；cpp/ = Clang 15 + CMake + Ninja；
+                cpp-debug/ = Clang 19 + LLDB/lldb-dap 19 + 调试专用 seccomp profile）
   app/ai/     LLM Provider Adapter（deepseek 真实 / mock 仅测试 / disabled）
   migrations/   Alembic
   tests/        pytest
@@ -84,11 +87,12 @@ PW_TEST_DATABASE_URL=postgresql+psycopg2://projectweave:projectweave@localhost:5
 
 ```bash
 docker build -t projectweave-sandbox-python:3.12 sandbox/python                # Python 镜像（一次性）
-docker build -t projectweave-sandbox-cpp:clang15-bookworm sandbox/cpp          # C++ 镜像（一次性）
-PW_SANDBOX_E2E=1 .venv/Scripts/python.exe -m pytest tests/test_executions_docker_e2e.py tests/test_executions_cpp_e2e.py -v  # 真实 Docker 验收（默认 skip）
+docker build -t projectweave-sandbox-cpp:clang15-bookworm sandbox/cpp          # C++ 运行镜像（一次性）
+docker build -t projectweave-sandbox-cpp-debug:clang19-trixie sandbox/cpp-debug  # C++ 调试镜像（LLDB DAP，一次性）
+PW_SANDBOX_E2E=1 .venv/Scripts/python.exe -m pytest tests/test_executions_docker_e2e.py tests/test_executions_cpp_e2e.py tests/test_debugging_cpp_e2e.py -v  # 真实 Docker 验收（默认 skip）
 ```
 
-无 Docker/镜像时创建执行返回 503（明确报错，不伪造）。隔离参数、工作区执行策略（Python noexec / C++ exec，D34）与配置见 `sandbox/README.md`。
+无 Docker/镜像时创建执行/调试返回 503（明确报错，不伪造）。隔离参数、工作区执行策略（Python noexec / C++ exec，D34）、调试专用 seccomp（D36）与配置见 `sandbox/README.md`。
 
 ## 4. 开发流程（严格增量迭代）
 

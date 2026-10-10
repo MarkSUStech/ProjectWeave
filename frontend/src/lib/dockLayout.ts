@@ -3,7 +3,7 @@ import type { WorkspaceMode } from '../types/ide'
 
 export const WORKSPACE_PANELS = [
   { id: 'files', title: '文件' }, { id: 'tasks', title: '任务' }, { id: 'history', title: '历史' },
-  { id: 'editor', title: '编辑器' }, { id: 'canvas', title: '教学画布' }, { id: 'mentor', title: 'AI 导师' },
+  { id: 'editor', title: '编辑器' }, { id: 'canvas', title: '教学画布' }, { id: 'mentor', title: 'AI 导师' }, { id: 'debug', title: '调试' },
   { id: 'terminal', title: '终端' }, { id: 'tests', title: '测试' }, { id: 'events', title: '学习事件' },
 ] as const
 export type WorkspacePanelId = typeof WORKSPACE_PANELS[number]['id']
@@ -30,6 +30,7 @@ export function buildDockPreset(api: DockviewApi, mode: WorkspaceMode) {
   }
   api.addPanel({ ...panelOptions('terminal'), position: { direction: 'below' }, initialHeight: 190 })
   for (const id of ['tests', 'events'] as const) api.addPanel({ ...panelOptions(id), position: { referencePanel: 'terminal', direction: 'within' }, inactive: true })
+  if (mode === 'debugging') api.addPanel({ ...panelOptions('debug'), position: { referencePanel: 'terminal', direction: 'within' } })
   api.getPanel(main)?.api.setActive()
 }
 

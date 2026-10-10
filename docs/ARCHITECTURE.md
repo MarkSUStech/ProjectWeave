@@ -59,6 +59,12 @@
   - `router.py`：`POST /tutor/turns`（含 requestAnswerLevel）、`GET /tutor/suggestions`（拉取式主动建议）、`GET /tutor/decisions`；决策追加 `tutor-turn` 事件（payload 含 trigger/answerRequested）。决策可携带 **workspace_actions**（Gate 分级 A0/A1/A2 + payload 校验 + H4 联动，D28）。
 - **工作台动作执行（前端，P3.4/D28）**：`lib/workspace/executor.ts` 确定性执行链（A0 通知 / A1 布局切换×锁定联防+撤销栈 / A2 确认队列→草稿）；`stores/workspaceStore.ts`（通知/撤销栈/待确认补丁）；`WorkspaceNoticeStrip` 自包含通知条组件（挂载点待并行前端合入，D28）；每动作上报 `workspace-action` 审计事件。
 - **领域模块** `app/domains/settings/`（P2.6）：`user_settings`（owner 主键、interventionMode quiet/adaptive/guided，默认 adaptive）；`GET/PATCH /api/v1/settings`。
+- **领域模块** `app/domains/debugging/`（P4.5a，交互式调试，D36/D37）：
+  - `models.py`：`debug_sessions` 表（状态机 creating→building→configuring→running⇄paused→terminated + end_reason；文件快照/断点/快照[位置/线程/栈帧/作用域变量]/构建诊断/DAP 日志；空闲与硬超时时间戳）。
+  - `dap_client.py`：DAP 客户端（Content-Length 帧；响应按 request_seq 唤醒；事件回调非阻塞——读线程只入队）。
+  - `debug_sandbox.py`：长生命周期调试容器（sleep infinity + `docker exec -i` 通道；文件经 stdin tar 注入；**调试专用 seccomp** = 上游默认 profile 仅放开 personality，普通沙箱零改动）；trixie 镜像 clang 19 + lldb-dap 19。
+  - `service.py`：每会话一个串行线程独占全部 DAP 请求（防死锁）；快照抓取（threads→stackTrace→顶帧 scopes+variables，空栈重试）；看门狗（空闲 600s/硬 1800s）+ 启动清理 + DAP 死亡回收；**指令白名单**（不透传任意 LLDB 命令）。
+  - `router.py`：`POST /debug-sessions`、`GET /{id}`（快照轮询）、`POST /{id}/commands`、`GET /{id}/variables`（懒加载）、`DELETE /{id}`。
 - **领域模块** `app/domains/executions/`（P4.2b，远程执行沙箱，D32/D33）：
   - `models.py`：`execution_sessions` 表（状态机 queued→preparing→running→completed|failed|timed-out|cancelled、文件快照 JSONB、stdout/stderr/事件流/诊断/测试结果/阶段、沙箱引擎与镜像、排队/开始/结束时间）。
   - `sandbox/`：`SandboxManager` 协议（available/run/cleanup_stale）+ `DockerSandboxManager`——一次性容器：`--network none`、`--read-only` + tmpfs（属主 10001；**工作区执行策略语言专属 D34**：Python `noexec`，C++ `exec` 由服务端 `SandboxSpec.exec_workspace` 声明，客户端不可控）、非 root、cap-drop ALL、no-new-privileges、memory/cpu/pids 限额、stdin gzip-tar 注入、`pw.sandbox` 标签追踪 + 启动清理 + 用后即毁；gVisor/微 VM 未来同协议接入。
@@ -108,6 +114,11 @@
 | POST | /api/v1/executions | 创建远程执行（202 排队；Python run/test；沙箱不可用 503；校验失败 422） |
 | GET | /api/v1/executions/{id}?afterSeq= | 执行会话查询（状态/输出/诊断/测试结果/phases；afterSeq 增量事件轮询） |
 | POST | /api/v1/executions/{id}/cancel | 取消执行（幂等；终态返回当前状态） |
+| POST | /api/v1/debug-sessions | 创建 C++ 调试会话（201；编译失败→terminated/build-failed，不启动调试器） |
+| GET | /api/v1/debug-sessions/{id} | 调试快照（状态/位置/线程/栈帧/作用域变量/断点验证/DAP 日志） |
+| POST | /api/v1/debug-sessions/{id}/commands | 结构化调试指令（白名单：continue/pause/next/stepIn/stepOut/stop/setBreakpoints） |
+| GET | /api/v1/debug-sessions/{id}/variables?variablesReference= | 变量懒加载（复杂对象展开） |
+| DELETE | /api/v1/debug-sessions/{id} | 停止调试并回收容器（幂等） |
 | （前端上报） | workspace-action 事件 | 工作台动作执行结果审计（executed/rejected/needs-confirmation/confirmed/undone） |
 
 OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
@@ -122,6 +133,7 @@ OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
 - **可视化引擎**（`src/viz/`，P3.1-P3.3，D24-D26）：`sceneSchema.ts`（TeachingScene zod：sourceType 三分类 runtime/static/conceptual + 来源标签；dataBinding；components；allowedInteractions）；`registry.ts`（L1 组件注册表，重复注册抛错）；`SceneRenderer.tsx`（schema 校验 + 查表渲染 + 多组件纵向组合 + **trace 头部（运行时间/指纹缩写）与过期横幅**）；组件：`consoleTimeline.tsx` 与 `variablesState.tsx`（observe() 声明式观察，D25）；场景：单组件 ×2 + L2 组合 debug-panel。
 - **版本绑定（§14.3，D26）**：`lib/fingerprint.ts`（执行内容 SHA-256 指纹，无 subtle 时 FNV-1a 降级）；runStore `trace`（traceId/指纹/路径/时间）；运行时写入 trace，code-run/tests-run 学习事件携带 traceId；IdePage 持续比对草稿指纹与单文件运行指纹，不一致时画布显示"数据已过期"横幅（旧执行数据不冒充当前）。服务器 codeVersion（已保存状态）与执行指纹（草稿）两层语义并存。
 - **学习事件（前端）**：`lib/eventTracker.ts` 批量缓冲（满 5 条或 30s flush，失败保留队列重试，队列上限 50）上报 code-run/tests-run；服务端事件（保存/诊断/规划）由后端产生；IDE 事件页签实时展示（类型徽标 + 摘要 + 序号，可刷新）。
+- **调试工作台（P4.5a，D37）**：`stores/debugStore.ts`（断点集合[会话中变更同步 setBreakpoints]、快照轮询 700ms 终态停、懒加载缓存、错误如实呈现）；EditorPanel 的 Monaco glyph margin 断点点击 + 断点/暂停行 decorations 增量刷新（**不重建编辑器**）；调试工具栏（启动/继续/单步跳过/进入/跳出/停止）；`DebugPanel`（Dockview 'debug' 面板：调用栈点击跳转、作用域变量懒加载展开、线程、断点验证）；viz 新增 L1 组件 `debug-snapshot` + 场景 runtime.debug-snapshot.v1（真实 LLDB 数据标注；调试会话期间画布自动切换；**源码过期横幅**：会话指纹 vs 草稿指纹）；Mentor 暂停时读取真实调试快照摘要（只读，AI 不控制调试器）。
 - **AI Mentor 面板**：真实教学回合（发送问题 → 回复气泡带 intent/H 级徽标、目标概念与 token 用量，降级决策带标记）；**"答案级帮助（H4）"显式勾选**（勾选才可能获得 H4，事件记录 answerRequested）；历史加载；503 显示"AI 未配置"配置指引；失败错误可见；Motion Primitives 消息进入；服务端真实 propose-patch 含代码且目标已打开时，可用 Monaco DiffEditor 只读比较，不自动应用。
 - **AI 介入**：IDE 顶栏三模式切换（安静/自适应/引导，PATCH 持久化，失败回滚）；运行/测试失败后自动拉取 suggestions——满足条件时在编辑区顶部显示**非阻塞建议条**（可忽略），Quiet 模式后端直接返回 null。
 - **API 层**：`src/api/client.ts` 统一 fetch 封装（`ApiError` 错误映射，网络失败有可读提示）；`src/api/projects.ts`、`src/api/files.ts` 所有响应过 zod 校验。

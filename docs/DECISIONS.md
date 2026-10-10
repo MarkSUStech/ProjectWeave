@@ -482,3 +482,38 @@
 - 教学联动：Mentor 的 recentRunResult 改为最近一次运行的真实终端摘要（编译诊断/traceback 语言无关可见），诊断带文件行号供 H1-H3 启发式辅导；executionId/指纹/DAP 预留兼容。
 
 **验证**：cpp_runner 纯单元 18 个（诊断解析双格式/源集/目标解析/映射/buildSpec exec 声明）；C++ Docker E2E 13 个全过；前端 247（路由/胶水测试更新）。
+
+## D36 · 交互式调试：LLDB DAP + 长生命周期调试沙箱 + 最小 seccomp 授权
+
+**日期**：2026-10-11。
+
+**可行性验证先行（阶段 A，真实容器实测）**：
+- Docker 默认 seccomp **已允许 ptrace**（PTRACE_TRACEME 探针实证）——非 root uid 10001 可调试自有子进程（Yama ptrace_scope 允许后代）；
+- 唯一阻塞点：`personality(ADDR_NO_RANDOMIZE)`（LLDB 禁 ASLR）被默认 profile **按值**拦截（允许 0/8/0x20000/0xffffffff，禁 0x40000）；`disableASLR:false` launch 参数不消除该调用（LLDB 启动路径仍调用）；
+- 结论：不放宽全局策略，**调试沙箱专用 seccomp** = 上游 moby v28.0.1 默认 profile 仅移除 personality 的参数限制（27 条规则，其余一字不动，`backend/sandbox/cpp-debug/seccomp-debug.json`）；普通执行沙箱零改动。绝不使用 --privileged 或 seccomp=unconfined。普通调试沙箱面向受控开发/教学环境，非对抗恶意公网（同 D32 声明）。
+
+**架构**：
+- **DebugSession ≠ ExecutionSession**：调试是长生命周期交互会话——容器常驻（sleep infinity + `docker exec -i` 通道），状态机 CREATING→BUILDING→CONFIGURING→RUNNING⇄PAUSED→TERMINATED（end_reason 区分 completed/build-failed/debugger-error/timeout/cancelled/internal-error）；
+- **DAP 通道**：`docker exec -i <容器> lldb-dap` 的 stdio 直通（调试器与被调试程序同容器）；DapClient（Content-Length 帧 + 响应按 request_seq 唤醒 + 事件回调非阻塞）；
+- **线程模型防死锁**：DAP 读线程只入队；每会话一个串行线程独占全部 DAP 请求（初始化/事件快照/指令共用队列）——事件回调内绝不发请求；
+- **指令白名单**：continue/pause/next/stepIn/stepOut/stop/setBreakpoints/variables——**不从客户端透传任意 LLDB 命令**；调试器不接触项目数据库与敏感路径（文件经 stdin tar 注入一次性工作区）；
+- **快照**：每次 stopped 抓取（threads→stackTrace→顶帧 scopes+variables）落库供轮询；空栈短重试（步进瞬间 stackTrace 可能返回空——绝不用空数据冒充）；懒加载经 variablesReference；
+- **资源回收三防线**：看门狗线程（空闲 600s/硬上限 1800s，与主循环解耦）→ 服务启动清理遗留容器（pw.debug 标签）+ 悬挂行标记终止 → DAP 通道死亡即回收；轮询即活动（浏览器断连后自然进入空闲回收）；
+- 镜像：trixie 固定工具链（clang 19 / **lldb 19.1.7 + lldb-dap**/cmake 3.31/ninja 1.12；bookworm 的 lldb 14 无 lldb-dap 故升级基线），与运行镜像分离互不影响；调试构建 -O0 -g 复用 CppRunner 源集策略与诊断解析。
+
+**代价**：调试会话独占线程+容器（并发上限受机器约束，MVP 不做池化）；DAP 轮询粒度 700ms；ASLR 未禁（LLDB 行为差异可忽略，教学场景无影响）。
+
+**验证**：阶段 A 脚本全过（受限 flag 下 initialize→launch→断点→stopped→栈/变量→单步→terminate）；单测 14（Fake 沙箱 + 假 lldb-dap 子进程真实 DAP 帧协议）；真实 Docker E2E 6（A-H：指定行暂停/单步/真实变量/递归多帧/多文件断点/编译失败不启动调试器/停止清理/空闲超时回收）；真实 uvicorn 冒烟（跨文件断点 + continue 跨文件跳转 + 栈帧 + 零遗留）。
+
+## D37 · 调试前端与教学集成：Monaco 断点装饰 + 真实 DebugSnapshot 进 TeachingScene/Mentor
+
+**日期**：2026-10-11。
+
+**决策**：
+- **Monaco 断点**：glyph margin 点击切换（C++ 文件）；断点红点与暂停行高亮经 decorations collection 增量刷新——**不重建编辑器实例**（连续暂停/切换位置保撤销栈）；暂停位置变化自动打开对应文件（栈帧点击同路径）；
+- **调试面板**：新增 'debug' Dockview 面板（调试模式预设含）——调用栈（点击选中/跳转）、作用域变量（复杂对象 variablesReference 懒加载展开）、线程、断点验证状态；调试工具栏嵌入编辑器顶栏（启动/继续/单步跳过/进入/跳出/停止）；
+- **TeachingScene**：新增 L1 组件 `debug-snapshot`（数据绑定 debug:latest）+ 场景 runtime.debug-snapshot.v1——当前执行位置/可选中调用栈/变量值与**变化标记**（同会话内对比），明确标注"真实 lldb-dap 会话，非 AI 推测"；调试会话存在时画布自动切换该场景；**源码过期提示**（验收 K）：会话 codeFingerprint 与当前草稿指纹不一致 → 画布 stale 横幅 + 编辑器顶部警示（旧调试数据不冒充当前代码）；
+- **Mentor 只读联动**：调试暂停时 recentRunResult = 真实 LLDB 快照摘要（位置/栈/局部变量，截断 900 字符）——AI 可依真实暂停数据辅导；**AI 不控制调试器**（指令仅用户 UI 发起），H0-H4 与 Policy Gate 权限不变，不调用 AI 也可完整调试；
+- debugStore：断点集合维护（会话中变更同步 setBreakpoints 整文件替换语义）、700ms 轮询（终态停）、503/错误如实呈现。
+
+**验证**：前端 261 用例（新增 14：API schema/调用路径、断点维护/启动门控/轮询收敛/懒加载缓存/setBreakpoints 同步）+ typecheck/build；后端全量 194 + 三语言 E2E 30（Python 11/C++ 13/调试 6）+ PG 4 全过，零遗留容器。

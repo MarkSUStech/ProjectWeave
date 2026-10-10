@@ -31,9 +31,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # 沙箱遗留清理：上次服务退出可能留下执行容器（尽力而为，不阻塞启动）。
     from threading import Thread
 
+    from app.domains.debugging.service import cleanup_stale_debug
     from app.domains.executions.service import cleanup_stale_sandboxes
 
     Thread(target=cleanup_stale_sandboxes, daemon=True).start()
+    Thread(target=cleanup_stale_debug, daemon=True).start()
     yield
 
 

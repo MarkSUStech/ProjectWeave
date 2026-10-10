@@ -26,6 +26,7 @@ SERVER_EVENT_TYPES = {
     "plan-replanned",        # 学习路线重新规划
     "task-evaluated",        # 阶段任务验收（来源：evaluate 端点）
     "execution-finished",    # 远程执行结束（来源：executions 域，P4.2b）
+    "debug-session-finished",  # 调试会话结束（来源：debugging 域，P4.5a）
 }
 CLIENT_EVENT_TYPES = {
     "code-run",            # 浏览器运行（来源：前端上报）

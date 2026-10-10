@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-11（P4.2c C++20 多文件编译与执行，D34/D35）
+更新时间：2026-10-11（P4.5a C++ 交互式调试系统，D36/D37）
 
 ## 已完成（经过验证）
 
@@ -406,3 +406,36 @@
       失败不报成功[K 复测]）；Python E2E 11 复跑全过（无回归）；PG 4 全过；
       前端 **247 全过**（路由/胶水测试更新：C++ 路由 remote-cpp）+ typecheck/
       build 全过；TS 浏览器路径零回归
+
+### P4.5a C++ 交互式调试系统（D36/D37）
+
+- [x] **阶段 A 可行性验证（先行，真实容器实测）**：ptrace 默认 seccomp 已允许
+  （非 root 10001 可调试自有子进程）；唯一阻塞 personality(禁ASLR) 按值拦截 →
+  **调试专用 seccomp**（上游 moby v28.0.1 默认 profile 仅放开 personality 参数
+  限制，其余一字不动）；disableASLR 参数无效、绝不 --privileged/unconfined、
+  普通执行沙箱零改动；受限 flag 下完整 DAP 脚本全过
+- [x] **DebugSession 基础设施**：debug_sessions 表 + 状态机
+  （creating→building→configuring→running⇄paused→terminated + end_reason）；
+  DapClient（Content-Length 帧、按 seq 唤醒、事件非阻塞入队）；每会话串行
+  线程独占 DAP 请求（防死锁）；长生命周期容器（sleep infinity + docker exec
+  通道）；看门狗（空闲 600s/硬 1800s，独立线程）+ 启动清理 + DAP 死亡回收；
+  快照抓取空栈重试（不冒充）；指令白名单（无任意 LLDB 命令透传）
+- [x] **C++ LLDB DAP 适配**：trixie 调试镜像（clang 19 + lldb-dap 19.1.7 +
+  cmake/ninja，bookworm lldb 14 无 lldb-dap 故升基线）；调试构建 -O0 -g 复用
+  CppRunner 源集策略与编译诊断解析（编译失败不启动调试器，run 阶段不执行）；
+  断点经项目路径→容器路径映射，栈帧/位置归一化回项目相对路径
+- [x] **前端调试工作台**：Monaco glyph margin 断点 + 暂停行装饰（增量刷新不
+  重建编辑器）；调试工具栏；DebugPanel（调用栈跳转/变量懒加载/线程/断点
+  验证）；暂停自动定位文件；stdin/停止按钮复用现有终端面板模式
+- [x] **TeachingScene 集成**：L1 组件 debug-snapshot（数据绑定 debug:latest，
+  标注真实 lldb-dap 来源）+ 场景 runtime.debug-snapshot.v1（执行位置/可选中
+  调用栈/变量值与变化标记）；调试会话期间画布自动切换；**源码过期提示**
+  （会话指纹 vs 草稿指纹，验收 K）；Mentor 暂停时读取真实快照摘要（只读，
+  AI 不控制调试器，H0-H4 不变）
+- [x] 验证：后端 **194 全过**（新增 20：调试 API 单测 14[假 lldb-dap 子进程
+  真实 DAP 帧协议] + runner 归一化等）+ **调试 Docker E2E 6 个**（验收 A-H：
+  指定行暂停/单步行更新/真实局部变量/递归多帧/多文件断点[main.cpp+math.cpp
+  各停一次]/编译失败不启动调试器/停止零遗留/空闲超时回收）+ Python E2E 11 +
+  C++ E2E 13 复跑零回归 + PG 4；前端 **261 全过**（新增 14）+ typecheck/build；
+  真实 uvicorn 冒烟（跨文件断点、continue 跨文件跳转、真实变量 x=40/y=0、
+  栈帧 add←main、停止零遗留）通过

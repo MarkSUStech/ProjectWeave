@@ -61,3 +61,17 @@ export const DEBUG_PANEL_SCENE: TeachingScene = {
   ],
   allowedInteractions: ['点击条目查看详情', '点击变量展开变化序列'],
 }
+
+/** 真实调试快照场景（P4.5a）：调试模式/会话期间的教学画布。
+ * 数据全部来自 LLDB DAP 会话（debug:latest），非 AI 推测。 */
+export const DEBUG_SNAPSHOT_SCENE: TeachingScene = {
+  sceneId: 'builtin:debug-snapshot',
+  templateId: 'runtime.debug-snapshot.v1',
+  objectiveId: null,
+  sourceType: 'runtime',
+  dataBinding: { ref: 'debug:latest' },
+  components: [
+    { id: 'snapshot', type: 'debug-snapshot', config: { maxFrames: 8 } },
+  ],
+  allowedInteractions: ['点击选中调用栈帧'],
+}

@@ -142,3 +142,22 @@ html[data-ui-density] [data-slot="button"][data-size="sm"] { height: var(--pw-bu
 html[data-ui-density="compact"] .app-sidebar nav a { padding-block: 0.45rem; }
 html[data-ui-density="spacious"] .app-sidebar nav a { padding-block: 0.9rem; }
 .settings-dialog { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+
+/* 调试装饰（P4.5a）：Monaco 断点标记与暂停行高亮 */
+.pw-breakpoint-glyph {
+  background: #e5534b;
+  border-radius: 50%;
+  margin-left: 6px;
+  width: 10px !important;
+  height: 10px !important;
+  cursor: pointer;
+}
+.pw-paused-line {
+  background: rgba(210, 153, 34, 0.18);
+  border-top: 1px solid rgba(210, 153, 34, 0.5);
+  border-bottom: 1px solid rgba(210, 153, 34, 0.5);
+}
+.pw-paused-line-marker {
+  border-left: 2px solid #d29922;
+  margin-left: 3px;
+}

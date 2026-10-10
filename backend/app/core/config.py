@@ -52,5 +52,11 @@ class Settings(BaseSettings):
     execution_cpus: float = 1.0
     execution_pids_limit: int = 128
 
+    # --- 交互式调试会话（P4.5a，D36）---
+    # 无客户端活动（无轮询/指令）的空闲回收秒数。
+    debug_idle_timeout_seconds: int = 600
+    # 会话硬上限秒数（无论是否活跃）。
+    debug_hard_timeout_seconds: int = 1800
+
 
 settings = Settings()
