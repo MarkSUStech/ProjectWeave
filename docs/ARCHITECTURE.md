@@ -5,7 +5,7 @@
 ## 1. 总体形态
 
 模块化单体：一个 FastAPI 后端 + 一个 React SPA + 一个关系数据库。
-六大引擎中已实现：**Project Engine 基础部分**、**Learner Engine 的知识图谱、初始诊断与掌握模型**、**Curriculum Engine 的样板课程规划**、**学习事件信封**、**Tutor Engine**（DeepSeek 真实接入 + Policy Gate + H4 门控 + 介入三模式）；可视化与工作台动作未开始。**P2 教学闭环全部交付。**
+六大引擎中已实现：**Project Engine 基础部分**、**Learner Engine 的知识图谱、初始诊断与掌握模型**、**Curriculum Engine 的样板课程规划**、**学习事件信封**、**Tutor Engine**（DeepSeek 真实接入 + Policy Gate + H4 门控 + 介入三模式）、**Visual Interaction Engine 地基**（场景 Schema + 组件注册表 + SceneRenderer + console-timeline L1 组件）。**P2 教学闭环全部交付，P3 已启动。**
 
 ```
 ┌─────────────────────────┐      /api/v1 (JSON)       ┌──────────────────────────┐
@@ -102,7 +102,8 @@ OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
 ## 3. 前端（frontend/）
 
 - **技术**：React 19 + TypeScript（strict）+ Vite 8 + Tailwind CSS v4（`@theme` 令牌化深色主题）+ Zustand（persist）+ zod。
-- **路由**：`/`（仪表盘：项目列表 + 创建表单 + 知识图谱入口）、`/concepts`（知识图谱浏览页：域分组、先修/目标/评估方式展开、理解维掌握徽标叠加）、`/projects/:id`（详情 + 能力诊断卡片 + **学习路线卡片**：活动与原因、跳过折叠区、版本与重新规划 + 里程碑任务图）、`/projects/:id/assessment`（诊断：逐题作答 → 概念三档结果 + 逐题回顾）、`/projects/:id/ide`（教学 IDE，底部三页签均为真实功能：终端/测试/**学习事件日志**）。
+- **路由**：`/`（仪表盘：项目列表 + 创建表单 + 知识图谱入口）、`/concepts`（知识图谱浏览页：域分组、先修/目标/评估方式展开、理解维掌握徽标叠加）、`/projects/:id`（详情 + 能力诊断卡片 + **学习路线卡片**：活动与原因、跳过折叠区、版本与重新规划 + 里程碑任务图）、`/projects/:id/assessment`（诊断：逐题作答 → 概念三档结果 + 逐题回顾）、`/projects/:id/ide`（教学 IDE，底部三页签真实：终端/测试/学习事件；"调试"与"实验"画布为真实 SceneRenderer 时间线场景）。
+- **可视化引擎**（`src/viz/`，P3.1，D24）：`sceneSchema.ts`（TeachingScene zod：sourceType 三分类 runtime/static/conceptual + 来源标签；dataBinding；components；allowedInteractions）；`registry.ts`（L1 组件注册表：componentId/version/supportedConcepts/dataSources/renderCapabilities/View，重复注册抛错）；`SceneRenderer.tsx`（schema 校验 + 查表渲染，未注册/不合法显式错误面板）；`components/consoleTimeline.tsx`（真实运行输出时间线：相对毫秒 + 级别色 + 本地点击详情，零 LLM）；`scenes.ts`（内置标准场景 runtime.console-timeline.v1，绑定 run:latest）。
 - **学习事件（前端）**：`lib/eventTracker.ts` 批量缓冲（满 5 条或 30s flush，失败保留队列重试，队列上限 50）上报 code-run/tests-run；服务端事件（保存/诊断/规划）由后端产生；IDE 事件页签实时展示（类型徽标 + 摘要 + 序号，可刷新）。
 - **AI Mentor 面板**：真实教学回合（发送问题 → 回复气泡带 intent/H 级徽标、目标概念与 token 用量，降级决策带标记）；**"答案级帮助（H4）"显式勾选**（勾选才可能获得 H4，事件记录 answerRequested）；历史加载；503 显示"AI 未配置"配置指引；失败错误可见。
 - **AI 介入**：IDE 顶栏三模式切换（安静/自适应/引导，PATCH 持久化，失败回滚）；运行/测试失败后自动拉取 suggestions——满足条件时在编辑区顶部显示**非阻塞建议条**（可忽略），Quiet 模式后端直接返回 null。

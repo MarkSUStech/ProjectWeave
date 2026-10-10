@@ -11,6 +11,8 @@ import { EditorPanel } from '../components/ide/EditorPanel'
 import { MentorPanel } from '../components/ide/MentorPanel'
 import { BottomPanel } from '../components/ide/BottomPanel'
 import { CanvasPlaceholder } from '../components/ide/CanvasPlaceholder'
+import { SceneRenderer } from '../viz/SceneRenderer'
+import { LATEST_RUN_SCENE } from '../viz/scenes'
 import { useIdeUiStore } from '../stores/ideUiStore'
 import { useRunStore } from '../stores/runStore'
 import { useTestStore } from '../stores/testStore'
@@ -222,12 +224,16 @@ function IdeWorkspace({ project }: { project: Project }) {
         {mode === 'debugging' && (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 shrink-0 basis-3/5">{editor}</div>
-            <CanvasPlaceholder kind="execution" />
+            <div className="min-h-0 flex-1 border-t border-edge">
+              <SceneRenderer scene={LATEST_RUN_SCENE} />
+            </div>
           </div>
         )}
         {mode === 'visual-learning' && (
           <div className="flex min-h-0 flex-1 flex-col">
-            <CanvasPlaceholder kind="teaching" />
+            <div className="min-h-0 flex-1">
+              <SceneRenderer scene={LATEST_RUN_SCENE} />
+            </div>
             <div className="min-h-0 shrink-0 basis-1/4">{editor}</div>
           </div>
         )}

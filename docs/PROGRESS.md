@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-10（P2.6 完成，P2 全部交付）
+更新时间：2026-10-10（P3.1 完成；仓库已推送 GitHub）
 
 ## 已完成（经过验证）
 
@@ -109,15 +109,25 @@
       同项目 60s 冷却，trigger=auto 落库 + 事件）；前端顶栏三模式切换
       （PATCH 持久、失败回滚）、失败后非阻塞建议条（可忽略）、Mentor 面板
       H4 勾选框；D23 记录决策
-- [x] 验证（P2.5 轮）：SQLite 104 + PG 4 + 前端 137 用例、真实 DeepSeek 冒烟
-      （hint/H1/accepted 启发式不代写）全过
-- [x] 验证：SQLite pytest 111 个用例全过（新增 7：模式默认与更新持久与非法值、
-      H4 未请求降级/H4 请求放行且事件标记、quiet 不调 LLM、连续失败阈值边界、
-      60s 冷却、guided 可用）；PG 套件 4 个全过；前端 vitest 140 个全过
-      （settings API 3 + 既有用例适配 requestAnswerLevel）；typecheck/build
-      通过；真实 DeepSeek 冒烟通过（**模式切换持久化；无请求时真实模型自律
-      给 H2、明确请求后 H3——提示词与 Gate 两道防线均真实**；事件
-      answerRequested 标记正确）
+### P3 可视化与工作台（进行中）
+
+- [x] **仓库版本控制**：git init（main）、首次提交全部代码（.env/Key 扫描
+      确认未入库，唯一命中为测试桩假 Key sk-test）、推送
+      https://github.com/MarkSUStech/ProjectWeave（README 冲突保留本地版）
+- [x] **P3.1 Visual Engine 地基**：TeachingScene Schema（zod：sourceType 三分类
+      + 来源标签、dataBinding、components、allowedInteractions）；组件注册表
+      （元数据 + 重复注册抛错）；SceneRenderer（schema 校验 + 查表渲染，
+      未注册/不合法显式错误面板）；**首个 L1 组件 console-timeline**（真实
+      运行输出时间线：相对毫秒 + 级别色 + 本地点击详情，零 LLM）；IDE"调试"
+      与"实验"画布从占位替换为真实场景（runtime.console-timeline.v1，
+      无数据诚实空态）；D24 记录决策
+- [x] 验证（P2.6 轮）：SQLite 111 + PG 4 + 前端 140 用例、真实 DeepSeek 冒烟
+      （H4 双防线：无请求 H2 / 请求后 H3）全过
+- [x] 验证：前端 vitest 150 个用例全过（viz 10：schema 默认值与拒绝非法/
+      注册表元数据与重复注册/来源标签与时间线渲染（system 条目过滤、相对
+      毫秒）/诚实空态/点击详情本地交互/未注册显式报错/内置场景渲染）；
+      typecheck/build 通过；dev 冒烟通过（viz 模块经 Vite 编译无错）；后端
+      本轮零改动（111+4 状态不变）
 
 ### P1 验证汇总
 
@@ -127,6 +137,8 @@
 
 ## 未实现（明确标注，禁止伪装）
 
+- [ ] 第二类标准组件（调用栈/变量状态）与 L2 动态组合（AI 产出 SceneSpec）— P3.2
+- [ ] 真实执行数据绑定（traceId + codeVersion 过期标记）— P3.3
 - [ ] H4 之后的独立性迁移验证（依赖任务验收与 rubric）— P3.5
 - [ ] Guided 的阶段性检查/主动推进教学（需会话状态与更丰富证据）— P3+
 - [ ] 推送式建议（WebSocket）与忽略/暂停按钮的持久化 — P1.6+/P3
@@ -157,6 +169,7 @@
 ## 已知问题与债务
 
 - ~~SQLite 下时间戳序列化无时区后缀~~（已验证：PG 上为 ISO 带 Z，兼容套件覆盖，D16）。
+- ~~仓库尚未 git init~~（已推送 GitHub：MarkSUStech/ProjectWeave，main 分支）。
 - PG 兼容套件默认 skip，需手动带 `PW_TEST_DATABASE_URL` 运行；接入 CI 后可强制执行。
 - 本机开发环境注意：5432 与 8000 常被本机服务占用——PG 容器固定 5433，冒烟请用空闲端口。
 - 前后端契约手工镜像（Pydantic ↔ zod），改字段需双侧同步；考虑 openapi-typescript 代码生成（D4）。

@@ -37,6 +37,7 @@ frontend/   React + TypeScript + Vite + Tailwind v4（Node 22）
     stores/     Zustand（IDE 布局、终端/运行、测试面板状态）
     hooks/      useProjectFiles（文件树/编辑器/保存/自动保存）、useFileHistory（快照历史）
     lib/        Monaco 配置、显示标签；runner/（浏览器 Worker 运行器 + 测试运行时）
+    viz/        Visual Engine：sceneSchema / registry / SceneRenderer / L1 组件
     components/ ui/（通用组件）、ide/（工作台）、projects/
     pages/      Dashboard / ProjectDetail / IDE
     __tests__/  vitest

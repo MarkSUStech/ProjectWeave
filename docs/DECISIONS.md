@@ -4,6 +4,20 @@
 
 ---
 
+## D24 · Visual Engine 地基：结构化场景 + 注册表渲染，禁止 LLM 生成 React 代码
+
+**背景**：P3.1 落地 Visual Interaction Engine（设计 §9）。核心红线：不让 LLM 每次生成新的可视化代码；数据来源必须可信标注。
+
+**决策**：
+- **TeachingScene Schema**（zod，§9.5 字段子集）：sceneId/templateId（版本化）/objectiveId/sourceType（runtime/static/conceptual）/dataBinding/components/allowedInteractions；来源三分类与 UI 标签（真实执行/静态结构/概念模拟）由 schema 强制；
+- **组件注册表**（§9.3）：L1 组件登记 componentId/version/supportedConcepts/dataSources/renderCapabilities/accessibilityDescription/View；重复注册抛错；**SceneRenderer 只渲染已注册组件——未注册或 schema 不合法显式错误面板**，不静默伪装；
+- **首个 L1 组件 `console-timeline`**：渲染最近一次浏览器运行的真实输出为时间线（相对毫秒偏移 + 级别颜色 + 点击展开详情的**本地交互**，零 LLM 调用，§9.1）；数据绑定 `run:latest`；无数据诚实空态；
+- IDE"调试"与"实验"模式画布从占位替换为 SceneRenderer + 内置标准场景 `runtime.console-timeline.v1`；"架构"画布保持占位（static 来源组件未实现）。
+
+**影响**：P3.2 的第二类组件（调用栈/变量状态）按注册表模式追加；L2 动态组合（AI 产出 SceneSpec JSON 经 schema 严格校验）与 P3.3 codeVersion 绑定在其上扩展；L3 按需生成保持未实现。
+
+---
+
 ## D23 · H4 门控与三模式：Gate 强制 + 提示词自律双防线，建议为拉取式
 
 **背景**：P2.6 落地设计 §8.2/§8.3。H4（答案级帮助）必须用户明确请求；三模式要有真实行为差异而非摆设。
