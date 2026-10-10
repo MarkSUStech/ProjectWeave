@@ -54,6 +54,9 @@ def create_project(db: Session, payload: ProjectCreate, owner_id: str = "dev-use
         milestones=[m.model_dump(mode="json") for m in payload.milestones],
         acceptance_criteria=payload.acceptance_criteria,
     )
+    from app.domains.projects.templates import resolve_template
+
+    project.template_id = resolve_template(payload.stack).template_id
     db.add(project)
     db.flush()  # 生成项目 id，供初始脚手架文件引用
     from app.domains.projects.file_service import starter_files_for

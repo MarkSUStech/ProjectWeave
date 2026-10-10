@@ -111,8 +111,11 @@ def test_create_cpp_project_seeds_cpp_starter(client):
     assert "调试" in readme  # 起步指引
 
 
-def test_cpp_project_skips_ts_pilot_course(client, db_session):
-    """C++ 项目首次生成学习路线时不种子 TS Markdown 试点任务/文件。"""
+def test_cpp_project_seeds_cpp_pointer_course(client, db_session):
+    """C++ 项目种子《理解 C++ 指针》课程（3 任务 + 初始代码 + 测试），不种 TS 课程。"""
+    from app.domains.concepts.service import ensure_seed_concepts
+
+    ensure_seed_concepts(db_session)  # cpp.* 概念供任务知识要求引用
     payload = dict(VALID_CREATE_PAYLOAD)
     payload["stack"] = ["cpp"]
     resp = client.post("/api/v1/projects", json=payload)
@@ -121,10 +124,61 @@ def test_cpp_project_skips_ts_pilot_course(client, db_session):
     plan_detail = client.get(f"/api/v1/plans/{pid}")
     assert plan_detail.status_code == 200
     tasks = plan_detail.json()["tasks"]
-    assert tasks == []  # C++ 课程内容待制作：诚实为空，不种不适用的 TS 任务
+    assert [t["taskId"] for t in tasks] == [
+        "cpp-ptr-1-address", "cpp-ptr-2-dereference", "cpp-ptr-3-functions",
+    ]
+    # 任务携带渐进提示与可视化建议
+    assert tasks[0]["hints"] and tasks[0]["hints"][0]["level"] == 1
+    assert "调试" in tasks[1]["vizSuggestion"]
+    # 文件：任务初始代码与测试已种，且无 TS 文件
+    files = {f["path"] for f in client.get(f"/api/v1/projects/{pid}/files").json()["items"]}
+    assert "src/tasks/task1_address.cpp" in files
+    assert "src/tasks/task2_deref_test.cpp" in files
+    assert all(not p.endswith(".ts") for p in files)
+
+
+def test_python_project_no_course_explicit(client, db_session):
+    """Python 项目：Python 脚手架 + 无课程（学习路线如实为空，不展示其他语言课程）。"""
+    from app.domains.concepts.service import ensure_seed_concepts
+
+    ensure_seed_concepts(db_session)
+    payload = dict(VALID_CREATE_PAYLOAD)
+    payload["stack"] = ["Python"]
+    resp = client.post("/api/v1/projects", json=payload)
+    pid = resp.json()["id"]
 
     files = {f["path"] for f in client.get(f"/api/v1/projects/{pid}/files").json()["items"]}
-    assert all(not p.endswith(".ts") for p in files)
+    assert "src/main.py" in files and "tests/test_main.py" in files
+    assert not any(p.endswith((".ts", ".cpp")) for p in files)
+    plan_detail = client.get(f"/api/v1/plans/{pid}")
+    assert plan_detail.status_code == 200
+    assert plan_detail.json()["tasks"] == []
+
+
+def test_replan_never_overwrites_user_files(client, db_session):
+    """重规划不覆盖用户代码：用户改过的种子文件在 replan 后保持原样。"""
+    from app.domains.concepts.service import ensure_seed_concepts
+
+    ensure_seed_concepts(db_session)
+    payload = dict(VALID_CREATE_PAYLOAD)
+    payload["stack"] = ["cpp"]
+    pid = client.post("/api/v1/projects", json=payload).json()["id"]
+    client.get(f"/api/v1/plans/{pid}")  # 首次生成种子课程文件
+
+    # 用户修改任务初始文件
+    user_code = "// my own code" + chr(10) + "int main() { return 0; }" + chr(10)
+    put = client.put(
+        f"/api/v1/projects/{pid}/files",
+        json={"path": "src/tasks/task1_address.cpp", "content": user_code},
+    )
+    assert put.status_code in (200, 201)
+
+    client.post(f"/api/v1/plans/{pid}/replan")  # 重规划
+    content = client.get(
+        f"/api/v1/projects/{pid}/files/content",
+        params={"path": "src/tasks/task1_address.cpp"},
+    ).json()["content"]
+    assert content == user_code  # 用户代码未被覆盖
 
 
 def test_ts_project_keeps_existing_starter(client, db_session):

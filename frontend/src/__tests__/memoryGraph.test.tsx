@@ -119,3 +119,82 @@ describe('MemoryGraphView', () => {
     expect(text).not.toContain('"value":"10"')
   })
 })
+
+describe('变化高亮：跨暂停代次 + 递归帧隔离（P5.1 回归）', () => {
+  it('同帧值跨代次变化标记 changed；未变化不标记', () => {
+    const base = {
+      scopes: [{
+        name: 'Locals', variablesReference: 1, expensive: false,
+        variables: [
+          { name: 'x', value: '10', type: 'int', evaluateName: 'x', variablesReference: 0 },
+          { name: 'y', value: '5', type: 'int', evaluateName: 'y', variablesReference: 0 },
+        ],
+      }],
+      pointerGraph: null,
+    }
+    // 第一次暂停（代次 1）：无历史，无变化标记
+    useDebugStore.setState({ snapshot: snapshot({ pauseSeq: 1, ...base }) as never, selectedFrameId: null })
+    const { unmount } = render(<MemoryGraphView instanceId="t" config={{}} />)
+    let text = screen.getByTestId('rf-stub').textContent ?? ''
+    expect(text).toContain('"changed":false')
+    unmount()
+
+    // 第二次暂停（代次 2）：x 变为 20 → changed:true；y 不变 → false
+    useDebugStore.setState({
+      snapshot: snapshot({
+        pauseSeq: 2,
+        scopes: [{
+          name: 'Locals', variablesReference: 1, expensive: false,
+          variables: [
+            { name: 'x', value: '20', type: 'int', evaluateName: 'x', variablesReference: 0 },
+            { name: 'y', value: '5', type: 'int', evaluateName: 'y', variablesReference: 0 },
+          ],
+        }],
+        pointerGraph: null,
+      }) as never,
+    })
+    render(<MemoryGraphView instanceId="t" config={{}} />)
+    text = screen.getByTestId('rf-stub').textContent ?? ''
+    expect(text).toContain('"value":"20"')
+    const xNode = text.split('{"label":"x"')[1]?.split('}')[0] ?? ''
+    expect(xNode).toContain('"changed":true')
+    const yNode = text.split('{"label":"y"')[1]?.split('}')[0] ?? ''
+    expect(yNode).toContain('"changed":false')
+  })
+
+  it('递归帧隔离：帧 7 的同名变量 x 不与顶帧历史比较', () => {
+    // 顶帧历史：x=10（上一渲染遗留或先渲染顶帧）
+    useDebugStore.setState({
+      snapshot: snapshot({
+        pauseSeq: 1,
+        scopes: [{
+          name: 'Locals', variablesReference: 1, expensive: false,
+          variables: [{ name: 'x', value: '10', type: 'int', evaluateName: 'x', variablesReference: 0 }],
+        }],
+        pointerGraph: null,
+      }) as never,
+      selectedFrameId: null,
+    })
+    const { unmount } = render(<MemoryGraphView instanceId="t" config={{}} />)
+    unmount()
+
+    // 切到帧 7：其 x 值 999（与顶帧 10 不同），但帧 7 无自身历史 → 不标 changed
+    useDebugStore.setState({
+      selectedFrameId: 7,
+      frameVars: {
+        7: {
+          frameId: 7, pauseSeq: 1,
+          scopes: [{
+            name: 'Locals', variablesReference: 9, expensive: false,
+            variables: [{ name: 'x', value: '999', type: 'int', evaluateName: 'x', variablesReference: 0 }],
+          }],
+          pointerGraph: null,
+        },
+      },
+    })
+    render(<MemoryGraphView instanceId="t" config={{}} />)
+    const text = screen.getByTestId('rf-stub').textContent ?? ''
+    const xNode = text.split('{"label":"x"')[1]?.split('}')[0] ?? ''
+    expect(xNode).toContain('"changed":false')
+  })
+})

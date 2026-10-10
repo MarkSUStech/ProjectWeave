@@ -38,6 +38,9 @@ class PlanTaskRead(APIModel):
     title: str
     status: str
     description: str = ""
+    # P5.1：任务级渐进提示（AI Tutor 按当前 H 级取用）与可视化教学建议
+    hints: list[dict] = Field(default_factory=list)
+    viz_suggestion: str = ""
     required_concepts: list[str] = Field(default_factory=list)
     deliverable: str = ""
     test_files: list[str] = Field(default_factory=list)

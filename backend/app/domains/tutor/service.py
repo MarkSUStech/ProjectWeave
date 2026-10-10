@@ -143,6 +143,10 @@ def build_context(db: Session, project, extras: "dict | None" = None) -> dict:
                 "goal": task.deliverable,
                 "requiredConcepts": task.required_concepts,
                 "status": task.status,
+                # P5.1：任务级渐进提示（与 H1-H4 对应；Tutor 按当前层级取用，
+                # 优先引导学生预测下一步程序状态再单步验证）
+                "hints": task.hints or [],
+                "vizSuggestion": task.viz_suggestion or "",
             }
 
     # 最近求助记录（教学历史，最小条数）
@@ -176,6 +180,12 @@ SYSTEM_PROMPT = """你是 ProjectWeave 教学 IDE 中的 AI 导师。你的目�
 教学原则：
 - 默认从提问和方向性提示开始，不直接给完整答案；
 - 回答要结合学习者的当前任务、掌握状态与最近行为；
+- 当 CONTEXT.currentTask 提供 hints（任务级渐进提示）时，按当前 hintLevel
+  取对应层级的提示内容组织回复——优先引导学生**预测**下一步程序状态或
+  变量值，再让学生运行/单步执行验证；hints 的 level 4 仅在用户明确请求
+  答案（requestAnswerLevel）时使用；
+- 当 CONTEXT.currentTask.vizSuggestion 存在且学生遇到与运行状态相关的问题时，
+  引导其使用真实调试器（断点/单步/调用栈/内存图）观察，而不是口头描述；
 - 不伪造系统状态，不承诺你做不到的操作；
 - 回复使用中文，简洁清晰（一般不超过 200 字）。
 

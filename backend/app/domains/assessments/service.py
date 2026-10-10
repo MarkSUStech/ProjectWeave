@@ -33,8 +33,16 @@ class AssessmentNotFoundError(AssessmentError):
 
 
 def _domains_for_stack(stack: list[str]) -> set[str]:
-    """项目技术栈 → 诊断域（设计 6.4：范围由项目需求反推，不做通用语言考试）。"""
+    """项目技术栈 → 诊断域（设计 6.4：范围由项目需求反推，不做通用语言考试）。
+
+    P5.1：C++ 项目诊断 cpp 域概念（不混入 JS 域）；Python 项目暂无
+    题库时退回工程域（诚实：不为 Python 生成假诊断）。
+    """
     joined = " ".join(stack).lower()
+    if any(k in joined for k in ("c++", "cpp", "clang")):
+        return {"cpp"}
+    if any(k in joined for k in ("python", "cpython")):
+        return {"engineering"}  # Python 题库待制作：只考通用工程概念
     frontend_markers = ("typescript", "javascript", "react", "vue", "next", "vite", "html", "css")
     if any(marker in joined for marker in frontend_markers):
         return {"javascript", "typescript", "browser", "engineering"}

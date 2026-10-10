@@ -33,10 +33,14 @@ export function DebugSnapshotView({ config }: { instanceId: string; config: Reco
   const historyRef = useMemo(() => new Map<string, VarSeen>(), [snapshot?.id])
   const varRows = useMemo(() => {
     const rows: Array<{ name: string; value: string; changed: boolean; changes: number }> = []
-    const seenKey = `f${selectedFrame}:p${snapshot?.pauseSeq ?? 0}`
+    // 跨暂停代次比较（同帧同名变量值变化计数）；递归帧按帧 id 隔离；会话切换重置
+    const sessionKey = snapshot?.id ?? 'none'
+    const seenKey = `${sessionKey}:f${selectedFrame}`
     let seen = frameSeen.get(seenKey)
     if (!seen) {
-      frameSeen.clear() // 只保留当前帧+代次
+      for (const k of frameSeen.keys()) {
+        if (!k.startsWith(`${sessionKey}:`)) frameSeen.delete(k)
+      }
       seen = new Map()
       frameSeen.set(seenKey, seen)
     }

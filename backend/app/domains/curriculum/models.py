@@ -39,6 +39,10 @@ class ProjectTask(Base):
     required_concepts: Mapped[list] = mapped_column(JSONType, default=list)  # conceptId 列表
     deliverable: Mapped[str] = mapped_column(String(500), default="")
     effort_band: Mapped[str] = mapped_column(String(10), default="medium")  # small/medium/large
+    # P5.1：任务级 AI 提示层级（渐进提示， Tutor 按当前 H 级取用）
+    hints: Mapped[list] = mapped_column(JSONType, default=list)  # [{level, text}]
+    # P5.1：可视化教学建议（引导使用调试/内存图等真实数据场景）
+    viz_suggestion: Mapped[str] = mapped_column(String(1000), default="")
     # 任务绑定的测试文件路径（任务级验收只看这些文件）
     test_files: Mapped[list] = mapped_column(JSONType, default=list)
     # 任务初始代码 [{path, content}]，项目创建时种子到 project_files

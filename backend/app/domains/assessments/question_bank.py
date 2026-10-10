@@ -5,7 +5,7 @@
 "理解问题"中的预测型），界面已明确标注。
 """
 
-QUESTION_BANK_VERSION = 1
+QUESTION_BANK_VERSION = 2
 
 QUESTION_BANK: list[dict] = [
     {
@@ -181,6 +181,102 @@ QUESTION_BANK: list[dict] = [
             "抛出未捕获异常",
             "进入死循环等待输入",
         ],
+        "answerIndex": 1,
+    },
+    # ---------------- C++（P5.1：指针课程诊断；确定性判定） ----------------
+    {
+        "id": "q.cpp-variables-1",
+        "conceptId": "cpp.variables",
+        "domain": "cpp",
+        "difficulty": 1,
+        "prompt": "int x = 5; x = x + 3; 执行后 x 的值是？",
+        "options": ["5", "8", "3", "未定义"],
+        "answerIndex": 1,
+    },
+    {
+        "id": "q.cpp-variables-2",
+        "conceptId": "cpp.variables",
+        "domain": "cpp",
+        "difficulty": 2,
+        "prompt": "int a = 1; int b = a; b = 99; 之后 a 的值是？",
+        "options": ["99", "1", "未定义", "编译错误"],
+        "answerIndex": 1,
+    },
+    {
+        "id": "q.cpp-addresses-1",
+        "conceptId": "cpp.addresses",
+        "domain": "cpp",
+        "difficulty": 1,
+        "prompt": "表达式 &x 的含义是？",
+        "options": ["x 的值", "x 的内存地址", "x 的类型", "把 x 清零"],
+        "answerIndex": 1,
+    },
+    {
+        "id": "q.cpp-pointers-1",
+        "conceptId": "cpp.pointers",
+        "domain": "cpp",
+        "difficulty": 2,
+        "prompt": "int x = 10; int* p = &x; 之后 p 的值等于？",
+        "options": ["10", "x 的地址 &x", "nullptr", "不确定的随机值"],
+        "answerIndex": 1,
+    },
+    {
+        "id": "q.cpp-pointers-2",
+        "conceptId": "cpp.pointers",
+        "domain": "cpp",
+        "difficulty": 3,
+        "prompt": "int* p = new int(5); 关于 p 的说法正确的是？",
+        "options": [
+            "p 指向一个栈变量",
+            "p 存储堆上对象的地址；该对象没有具名变量与之对应",
+            "p 的值是 5",
+            "p 与 int x = 5; 中的 x 完全等价",
+        ],
+        "answerIndex": 1,
+    },
+    {
+        "id": "q.cpp-dereference-1",
+        "conceptId": "cpp.dereference",
+        "domain": "cpp",
+        "difficulty": 2,
+        "prompt": "int x = 10; int* p = &x; *p = 20; 之后 x 的值是？",
+        "options": ["10", "20", "地址值", "未定义行为"],
+        "answerIndex": 1,
+    },
+    {
+        "id": "q.cpp-dereference-2",
+        "conceptId": "cpp.dereference",
+        "domain": "cpp",
+        "difficulty": 3,
+        "prompt": "int* p = nullptr; *p = 1; 的结果是？",
+        "options": ["p 变为 1", "编译错误", "未定义行为（通常崩溃）", "p 自动指向新变量"],
+        "answerIndex": 2,
+    },
+    {
+        "id": "q.cpp-references-1",
+        "conceptId": "cpp.references",
+        "domain": "cpp",
+        "difficulty": 2,
+        "prompt": "void f(int n) { n = 100; } int x = 1; f(x); 之后 x 的值是？",
+        "options": ["100", "1", "未定义", "编译错误"],
+        "answerIndex": 1,
+    },
+    {
+        "id": "q.cpp-references-2",
+        "conceptId": "cpp.references",
+        "domain": "cpp",
+        "difficulty": 3,
+        "prompt": "void g(int& n) { n = 100; } int x = 1; g(x); 之后 x 的值是？",
+        "options": ["100", "1", "未定义", "编译错误"],
+        "answerIndex": 0,
+    },
+    {
+        "id": "q.cpp-functions-1",
+        "conceptId": "cpp.functions",
+        "domain": "cpp",
+        "difficulty": 1,
+        "prompt": "函数调用 fib(4) 内部再调用 fib(3) 时，两个 fib 的局部变量 n？",
+        "options": ["共享同一份 n", "各自栈帧独立各有一份", "存在堆上", "编译器合并为一个"],
         "answerIndex": 1,
     },
 ]

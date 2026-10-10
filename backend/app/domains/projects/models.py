@@ -43,6 +43,8 @@ class Project(Base):
     acceptance_criteria: Mapped[list] = mapped_column(JSONType, default=list)
 
     spec_version: Mapped[int] = mapped_column(default=1)
+    # 项目模板（P5.1，D39）：创建时按技术栈解析并记录，如 cpp-pointers-v1
+    template_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow

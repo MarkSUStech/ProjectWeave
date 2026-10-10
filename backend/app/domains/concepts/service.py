@@ -54,14 +54,15 @@ def get_concept(db: Session, concept_id: str) -> KnowledgeConcept:
 
 
 def ensure_seed_concepts(db: Session) -> int:
-    """空表时写入种子概念（幂等），返回写入数量。
+    """种子概念（幂等，按 id 增量），返回写入数量。
 
-    种子内容是确定性模板（围绕样板课程的初始知识图），
-    升级种子时在 seed.py 中递增 version 字段。
+    种子内容是确定性模板；空表全量写入；已有库按 id 增量补种
+    （如 P5.1 追加的 cpp.* 域），不覆盖已存在概念。
     """
     validate_graph({c["id"]: c["prerequisites"] for c in SEED_CONCEPTS})
-    existing = db.scalar(select(func.count()).select_from(KnowledgeConcept))
-    if (existing or 0) > 0:
+    existing_ids = set(db.scalars(select(KnowledgeConcept.id)))
+    missing = [c for c in SEED_CONCEPTS if c["id"] not in existing_ids]
+    if not missing:
         return 0
     db.add_all(
         KnowledgeConcept(
@@ -75,7 +76,7 @@ def ensure_seed_concepts(db: Session) -> int:
             examples=c["examples"],
             version=c["version"],
         )
-        for c in SEED_CONCEPTS
+        for c in missing
     )
     db.commit()
-    return len(SEED_CONCEPTS)
+    return len(missing)

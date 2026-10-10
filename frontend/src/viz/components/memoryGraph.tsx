@@ -128,7 +128,8 @@ export function MemoryGraphView(_: { instanceId: string; config: Record<string, 
   const selectedFrameId = useDebugStore((s) => s.selectedFrameId)
   const reduced = useUiReducedMotion()
 
-  // 变化标记：同帧同代次内按名称对比（不同帧/新代次重置——D38 数据隔离）
+  // 变化标记：跨暂停代次比较同帧同名变量的值（单步后 x: 10→20 应高亮）；
+  // 递归帧按帧 id 隔离（不同帧的同名变量不互相污染）；换会话重置。
   const changedNames = useMemo(() => {
     const set = new Set<string>()
     const frameKey = selectedFrameId ?? 'top'
@@ -136,8 +137,9 @@ export function MemoryGraphView(_: { instanceId: string; config: Record<string, 
       ? frameVars[selectedFrameId]?.scopes.find((s) => s.name === 'Locals') ?? frameVars[selectedFrameId]?.scopes[0]
       : snapshot?.scopes.find((s) => s.name === 'Locals') ?? snapshot?.scopes[0]
     if (!scope) return set
-    const key = `${frameKey}:${snapshot?.pauseSeq ?? 0}`
-    const prev = changeHistory.get(key)
+    const sessionKey = snapshot?.id ?? 'none'
+    const historyKey = `${sessionKey}:${frameKey}`
+    const prev = changeHistory.get(historyKey)
     if (prev) {
       for (const v of scope.variables) {
         const before = prev.get(v.name)
@@ -145,13 +147,14 @@ export function MemoryGraphView(_: { instanceId: string; config: Record<string, 
       }
     }
     const now = new Map(scope.variables.map((v) => [v.name, v.value]))
-    changeHistory.set(key, now)
-    // 只保留当前帧+代次的历史（递归帧同名变量不互相污染）
+    changeHistory.set(historyKey, now)
+    // 只保留当前会话（旧会话历史清空）；同会话不同帧的历史保留，
+    // 切回旧帧时能继续对比该帧自己的前后值
     for (const k of changeHistory.keys()) {
-      if (k !== key) changeHistory.delete(k)
+      if (!k.startsWith(`${sessionKey}:`)) changeHistory.delete(k)
     }
     return set
-  }, [snapshot?.pauseSeq, snapshot?.scopes, frameVars, selectedFrameId])
+  }, [snapshot?.id, snapshot?.pauseSeq, snapshot?.scopes, frameVars, selectedFrameId])
 
   const input = useMemo<GraphInput>(() => {
     if (selectedFrameId !== null && frameVars[selectedFrameId]) {
@@ -219,5 +222,5 @@ export function MemoryGraphView(_: { instanceId: string; config: Record<string, 
   )
 }
 
-/** 帧内变化历史：键 = 帧:代次（换帧/新暂停即隔离，同名变量不串扰）。 */
+/** 帧内变化历史：键 = 会话:帧（跨暂停代次持久；递归帧按帧隔离，同名变量不串扰）。 */
 const changeHistory = new Map<string, Map<string, string>>()

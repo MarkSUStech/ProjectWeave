@@ -36,6 +36,9 @@ export const planTaskSchema = z.object({
   testFiles: z.array(z.string()).default([]),
   acceptanceCriteria: z.array(z.string()).default([]),
   dependsOn: z.array(z.string()).default([]),
+  // P5.1：任务级渐进提示与可视化教学建议
+  hints: z.array(z.object({ level: z.number().int(), text: z.string() })).default([]),
+  vizSuggestion: z.string().default(''),
 })
 
 export const planDetailSchema = z.object({

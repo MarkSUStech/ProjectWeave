@@ -93,18 +93,27 @@ def test_parse_clean_output_is_empty():
 # ---------------------------------------------------------------- 源集选择（driver 纯函数）
 
 
-def test_select_run_sources_includes_all_non_test_tus():
+def test_select_run_sources_includes_lib_tus_excludes_other_programs():
     files = {
         "src/main.cpp": "int main(){}",
         "src/math.cpp": "int add(int a,int b){return a+b;}",
         "src/math.hpp": "#pragma once",
         "tests/test_math.cpp": "int main(){}",
+        # 其他独立程序（课程任务/脚手架）：含 main，不混入入口的链接
+        "src/tasks/task2.cpp": "int main(){ return 0; }",
+        "src/tasks/task3.cpp": "int main(){ bump(&a); }",  # 含未完成 TODO 的独立任务
     }
     sources = select_run_sources(files, "src/main.cpp")
     assert sources[0] == "src/main.cpp"
-    assert "src/math.cpp" in sources
+    assert "src/math.cpp" in sources  # 无 main 的实现单元参与链接
     assert "tests/test_math.cpp" not in sources  # 测试文件不混入 run 构建
     assert "src/math.hpp" not in sources  # 头文件不参与命令行编译
+    assert "src/tasks/task2.cpp" not in sources  # 其他独立程序排除
+    assert "src/tasks/task3.cpp" not in sources
+
+    # 入口是任务文件时：脚手架与其他任务（含 main）被排除；无 main 的实现单元仍参与
+    sources2 = select_run_sources(files | {"src/tasks/task1.cpp": "#include <cstdio>" + chr(10) + "int main(){ return 0; }"}, "src/tasks/task1.cpp")
+    assert sources2 == ["src/tasks/task1.cpp", "src/math.cpp"]
 
 
 def test_select_test_sources_excludes_entry_like_files():

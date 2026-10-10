@@ -93,6 +93,7 @@ class ProjectRead(APIModel):
     milestones: list[Milestone]
     acceptance_criteria: list[str]
     spec_version: int
+    template_id: str | None = None  # 项目模板（P5.1，D39）
     created_at: datetime
     updated_at: datetime
 

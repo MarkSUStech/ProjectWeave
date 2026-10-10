@@ -33,21 +33,47 @@ class PlanNotFoundError(PlanError):
         super().__init__(f"plan not found for project: {project_id}", status=404)
 
 
-def seed_project_tasks(db: Session, project_id, cpp_skip: bool = False) -> int:
-    """新项目种子试点课程任务图（P4.1）+ 初始代码与测试文件；幂等。
+def _course_tasks_for(project) -> tuple[list[dict], dict[str, str]]:
+    """按项目模板选择课程（P5.1，D39）：返回 (任务列表, 测试文件内容表)。
 
-    试点课程替换原样板任务：三个 Markdown 解析任务，由简到繁，
-    每个任务绑定独立测试文件与初始代码（浏览器 Worker 单文件执行）。
-    cpp_skip=True（C++ 项目）：不种子 TS 试点任务与文件（不适用；
-    C++ 课程内容待课程制作阶段），返回 0。
+    - ts-markdown-v1 → TS 试点课程（原样保留）
+    - cpp-pointers-v1 → C++ 指针课程
+    - 其他（python-starter-v1/无课程模板）→ 空课程（学习路线如实为空）
+    """
+    from app.domains.projects.templates import get_template, resolve_template
+
+    template = get_template(project.template_id) or resolve_template(project.stack)
+    if template.course_id == "cpp-pointers-v1":
+        from app.domains.curriculum.cpp_course import CPP_COURSE_TASKS, CPP_TEST_FILE_CONTENTS
+
+        return CPP_COURSE_TASKS, CPP_TEST_FILE_CONTENTS
+    if template.course_id == "ts-markdown-v1":
+        return PILOT_COURSE_TASKS, PILOT_TEST_FILE_CONTENTS
+    return [], {}
+
+
+def seed_project_tasks(db: Session, project_id) -> int:
+    """按项目模板种子课程任务图 + 初始代码与测试文件；幂等。
+
+    - 已有任务：跳过（重规划/重启不重复种子，也不覆盖用户代码）；
+    - 文件种子只在**路径不存在**时写入——任何情况下不覆盖已有文件
+      （包括用户对种子文件的修改）；
+    - 无课程模板（如 Python）：不种任务，学习路线诚实为空。
     """
     existing = db.scalar(
         select(func.count()).select_from(ProjectTask).where(ProjectTask.project_id == project_id)
     )
     if (existing or 0) > 0:
         return 0
-    if cpp_skip:
+
+    from app.domains.projects.models import Project as ProjectModel
+    from app.domains.projects.service import get_project
+
+    project = get_project(db, str(project_id))
+    tasks, test_contents = _course_tasks_for(project)
+    if not tasks:
         return 0
+
     db.add_all(
         ProjectTask(
             project_id=project_id,
@@ -55,34 +81,42 @@ def seed_project_tasks(db: Session, project_id, cpp_skip: bool = False) -> int:
             milestone=t["milestone"],
             title=t["title"],
             description=t["description"],
-            depends_on=t["dependsOn"],
-            required_concepts=t["requiredConcepts"],
-            deliverable=t["deliverable"],
-            effort_band=t["effortBand"],
+            depends_on=t.get("dependsOn", []),
+            required_concepts=t.get("requiredConcepts", []),
+            deliverable=t.get("deliverable", ""),
+            effort_band=t.get("effortBand", "medium"),
             test_files=t.get("testFiles", []),
             starter_files=t.get("starterFiles", []),
             acceptance_criteria=t.get("acceptanceCriteria", []),
+            hints=t.get("hints", []),
+            viz_suggestion=t.get("vizSuggestion", ""),
         )
-        for t in PILOT_COURSE_TASKS
+        for t in tasks
     )
-    # 种子初始代码与测试文件到 project_files
+    # 种子初始代码与测试文件到 project_files（只在路径不存在时写——不覆盖用户代码）
     from app.domains.projects.models import ProjectFile
 
-    for task in PILOT_COURSE_TASKS:
+    existing_paths = set(
+        db.scalars(select(ProjectFile.path).where(ProjectFile.project_id == project_id))
+    )
+    for task in tasks:
         for starter in task.get("starterFiles", []):
-            db.add(
-                ProjectFile(
-                    project_id=project_id,
-                    path=starter["path"],
-                    content=starter["content"],
+            if starter["path"] not in existing_paths:
+                db.add(
+                    ProjectFile(
+                        project_id=project_id,
+                        path=starter["path"],
+                        content=starter["content"],
+                    )
                 )
-            )
+                existing_paths.add(starter["path"])
         for test_path in task.get("testFiles", []):
-            content = PILOT_TEST_FILE_CONTENTS.get(test_path, "")
-            if content:
+            content = test_contents.get(test_path, "")
+            if content and test_path not in existing_paths:
                 db.add(ProjectFile(project_id=project_id, path=test_path, content=content))
+                existing_paths.add(test_path)
     db.commit()
-    return len(SAMPLE_COURSE_TASKS)
+    return len(tasks)
 
 
 def list_tasks(db: Session, project_id) -> list[ProjectTask]:
@@ -270,14 +304,7 @@ def generate_plan(db: Session, project_id: str, bump: bool = False) -> LearningP
         if current is not None:
             return current
 
-    # C++ 项目不种子 TypeScript 试点课程（任务与文件均不适用；C++ 课程内容待制作）
-    from app.domains.projects.service import get_project as _get_project_for_stack
-
-    project = _get_project_for_stack(db, project_id)
-    if any(s.strip().lower() in ("c++", "cpp") for s in (project.stack or [])):
-        seed_project_tasks(db, project.id, cpp_skip=True)
-    else:
-        seed_project_tasks(db, project.id)
+    seed_project_tasks(db, project.id)
     tasks = _topological_tasks(list_tasks(db, project.id))
 
     mastery_map = {

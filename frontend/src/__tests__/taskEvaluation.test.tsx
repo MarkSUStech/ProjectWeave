@@ -58,7 +58,7 @@ function planDetail(taskStatus = 'pending'): PlanDetail {
       reason: 'r',
       createdAt: 't',
     },
-    tasks: [{ taskId: 'task-scaffold', milestone: 1, title: '建立页面骨架', status: taskStatus, description: '', requiredConcepts: [], deliverable: '', testFiles: [], acceptanceCriteria: [], dependsOn: [] }],
+    tasks: [{ taskId: 'task-scaffold', milestone: 1, title: '建立页面骨架', status: taskStatus, description: '', requiredConcepts: [], deliverable: '', testFiles: [], acceptanceCriteria: [], dependsOn: [], hints: [], vizSuggestion: '' }],
   }
 }
 

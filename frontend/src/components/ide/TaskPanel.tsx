@@ -161,6 +161,13 @@ export function TaskPanel({
             </div>
           )}
 
+          {currentTask.vizSuggestion && (
+            <div className="rounded border border-accent/40 bg-accent-soft px-2.5 py-2">
+              <div className="mb-0.5 text-[11px] font-medium text-accent">可视化教学实验</div>
+              <p className="text-[11px] leading-relaxed text-ink-dim">{currentTask.vizSuggestion}</p>
+            </div>
+          )}
+
           <Button
             size="sm"
             onClick={() => void runTests()}

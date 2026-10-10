@@ -27,6 +27,7 @@
   - `service.py`：项目确定性业务逻辑（CRUD、spec 字段变更提升 spec_version、UUID 解析、创建时种子初始脚手架文件——README.md、src/main.ts、src/main.test.ts、删除时级联清理文件）。
   - `file_service.py`：路径安全校验、文件 CRUD 与重命名（历史快照跟随）、删除（连带清理历史）、快照写入（同内容跳过 + 上限裁剪，显式 flush 适配 autoflush=False）、恢复（当前内容先入历史）、codeVersion 计算（全部文件按路径排序后整体 SHA-256，实时计算不落库）。
   - `router.py` / `file_router.py`：REST 端点，领域异常 → HTTP 404/409/422。
+- **项目模板（P5.1，D39）**：`projects/templates.py` 版本化注册表（cpp-pointers-v1 / python-starter-v1 / ts-markdown-v1）——创建时按技术栈解析并落库 `projects.template_id`；课程按 course_id 绑定（`curriculum/_course_tasks_for`）：C++ → 《理解 C++ 指针》3 任务（含 hints L1-L4 / vizSuggestion / 迁移练习）、TS → 试点课程（原样）、Python → 无课程（诚实为空）；课程文件只在路径不存在时种子（replan 永不覆盖用户代码）。概念种子按 id 增量（cpp.* 7 概念独立域）；诊断栈→域映射 C++→{cpp}。
 - **领域模块** `app/domains/concepts/`（P2.1，Learner Engine 的知识图谱部分）：
   - `models.py`：`knowledge_concepts` 表（字符串主键如 `js.closures`、domain 索引、先修/目标/评估/示例 JSONB、version）。
   - `seed.py`：17 个确定性种子概念（样板课程知识图：JS 10 / TS 2 / 浏览器 2 / 工程 3）。

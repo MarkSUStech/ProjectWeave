@@ -76,10 +76,19 @@ def find_entry_like_sources(files: dict[str, str]) -> set[str]:
 
 
 def select_run_sources(files: dict[str, str], entry: str) -> list[str]:
-    """run 模式：入口 + 全部非测试翻译单元（保序：入口优先，其余按路径排序）。"""
+    """run 模式源集（P5.1 修订 D35）：入口 + 非测试且不含 int main( 的翻译单元。
+
+    排除其他含 main 的 TU：它们是独立程序（课程各任务/脚手架各带 main），
+    链接进来只会产生重复符号或被其未完成 TODO 拖垮；排除后入口的真实
+    多文件依赖（无 main 的实现单元）仍然全部参与链接。确定性内容启发式，
+    与测试模式的排除策略一致。
+    """
     others = sorted(
         p for p in files
-        if not is_test_file(p) and os.path.splitext(p)[1] in SOURCE_EXTENSIONS and p != entry
+        if not is_test_file(p)
+        and os.path.splitext(p)[1] in SOURCE_EXTENSIONS
+        and p != entry
+        and not MAIN_RE.search(files.get(p, ""))
     )
     return [entry, *others]
 
