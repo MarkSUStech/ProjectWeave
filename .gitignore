@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+*.local
+
+# 环境与密钥
+.env
+*.key
+
+# 本地数据库与生成物
+*.db
+*.sqlite3
+
+# IDE / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 日志与临时
+*.log
+tmp/

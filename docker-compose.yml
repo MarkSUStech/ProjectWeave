@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: projectweave
+      POSTGRES_PASSWORD: projectweave
+      POSTGRES_DB: projectweave
+    ports:
+      # 宿主机 5432 常被本机 PostgreSQL 占用，容器统一映射到 5433。
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U projectweave"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

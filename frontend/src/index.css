@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+/*
+ * ProjectWeave 开发期主题（深色开发者工作台风格）。
+ * 通过 Tailwind v4 的 @theme 令牌保证全站一致性：
+ * 背景 app -> panel -> panel-2 三层，edge 为描边，accent 为主色。
+ */
+@theme {
+  --color-app: #0a0e14;
+  --color-panel: #10151d;
+  --color-panel-2: #161d28;
+  --color-edge: #232d3d;
+  --color-edge-soft: #1a2331;
+  --color-ink: #e6edf3;
+  --color-ink-dim: #8b98a9;
+  --color-ink-faint: #5c6878;
+  --color-accent: #4f9cf9;
+  --color-accent-strong: #2f7de1;
+  --color-accent-soft: #17273d;
+  --color-ok: #3fb950;
+  --color-warn: #d29922;
+  --color-danger: #f85149;
+
+  --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas,
+    SFMono-Regular, Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-app text-ink antialiased;
+  font-family:
+    "Inter",
+    -apple-system,
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/* 细滚动条，贴合工作台气质 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-edge) transparent;
+}

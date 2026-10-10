@@ -1,0 +1,10 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0.30,<3.0
+alembic>=1.13
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+# LLM Provider（DeepSeek 为 OpenAI 兼容 HTTP API）与测试客户端共用
+httpx>=0.27
+# PostgreSQL 驱动（docker-compose 的 db 服务映射在宿主机 5433）
+psycopg2-binary>=2.9.10
