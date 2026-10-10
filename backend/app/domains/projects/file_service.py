@@ -191,9 +191,81 @@ def delete_file(db: Session, project_id, path: str) -> None:
     db.commit()
 
 
+def _is_cpp_project(project: Project) -> bool:
+    """按技术栈声明判定 C++ 项目（C++/CPP 大小写不敏感）。"""
+    return any(s.strip().lower() in ("c++", "cpp") for s in (project.stack or []))
+
+
+CPP_MAIN = """#include <iostream>
+#include "math.hpp"
+
+// C++ 项目入口：点击行号左侧设置断点，再点工具栏「调试」启动 LLDB 会话。
+// 调试暂停后，右侧「调试」面板与教学画布会显示真实的变量、地址与指针关系。
+
+int fib(int n) {
+    if (n < 2) return n;
+    return fib(n - 1) + fib(n - 2);
+}
+
+int main() {
+    int a = 10;
+    int b = 20;
+    int sum = add(a, b);
+
+    int* p = &a;        // 指向栈变量：调试画布会画出已验证的 p -> a
+    int* np = nullptr;  // 空指针：显式状态，不画箭头
+    int* heap = new int(42);  // 堆指针：地址未解析（不虚构指向）
+    *p = 30;            // 通过指针修改 a —— 单步后观察 a 与 *p 的变化
+
+    int f = fib(4);     // 递归：调用栈面板可见多个 fib 帧
+    std::cout << "sum=" << sum << " a=" << a << " *heap=" << *heap
+              << " fib(4)=" << f << std::endl;
+    delete heap;
+    return 0;
+}
+"""
+
+CPP_MATH_HPP = """#pragma once
+
+// 多翻译单元示例：math.cpp 提供实现，main.cpp 引用此头文件。
+// 运行/调试时系统会把所有 .cpp 一起编译链接为真实可执行程序。
+int add(int a, int b);
+int mul(int a, int b);
+"""
+
+CPP_MATH_CPP = """#include "math.hpp"
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int mul(int a, int b) {
+    return a * b;
+}
+"""
+
+CPP_TEST = """#include <cstdio>
+#include "../src/math.hpp"
+
+// C++ 测试约定：每个测试文件编译为独立可执行程序。
+// 通过 = 退出码 0 且有输出；断言失败用返回码报告。
+// 运行方式：测试面板「运行测试」，或在此文件上点「测试」按钮。
+
+int main() {
+    if (add(2, 3) != 5) { printf("add(2,3) != 5 FAIL"); return 1; }
+    printf("add(2,3) = %d ... ok", add(2, 3));
+    if (mul(3, 4) != 12) { printf("mul(3,4) != 12 FAIL"); return 1; }
+    printf("mul(3,4) = %d ... ok", mul(3, 4));
+    return 0;
+}
+"""
+
+
 def starter_files_for(project: Project) -> list[ProjectFile]:
     """新项目的初始脚手架（确定性模板，非 AI 生成）。
 
+    按技术栈分支：C++ 项目种子 C++ 多文件脚手架（可运行/可测试/可调试，
+    含指针演示）；其余维持 TypeScript 脚手架。
     后续接入 Curriculum Engine 后将由课程的 starterState 接管。
     """
     readme = (
@@ -225,6 +297,24 @@ def starter_files_for(project: Project) -> list[ProjectFile]:
         "  });\n"
         "});\n"
     )
+    cpp_readme_suffix = (
+        "\n## 起步\n\n"
+        "- **运行**：打开 `src/main.cpp` 点「▶ 运行」（远程沙箱 Clang 19 / C++20，多文件一起编译链接）\n"
+        "- **测试**：打开 `tests/test_math.cpp` 点「▶ 测试」，或测试面板整体运行\n"
+        "- **调试**：在 `src/main.cpp` 行号左侧点一下设断点 → 工具栏「调试」→ 暂停后看"
+        "「调试」面板（调用栈/变量）与教学画布（内存与指针图）\n"
+        if _is_cpp_project(project)
+        else ""
+    )
+    if _is_cpp_project(project):
+        readme = readme + cpp_readme_suffix
+        return [
+            ProjectFile(project_id=project.id, path="README.md", content=readme),
+            ProjectFile(project_id=project.id, path="src/main.cpp", content=CPP_MAIN),
+            ProjectFile(project_id=project.id, path="src/math.hpp", content=CPP_MATH_HPP),
+            ProjectFile(project_id=project.id, path="src/math.cpp", content=CPP_MATH_CPP),
+            ProjectFile(project_id=project.id, path="tests/test_math.cpp", content=CPP_TEST),
+        ]
     return [
         ProjectFile(project_id=project.id, path="README.md", content=readme),
         ProjectFile(project_id=project.id, path="src/main.ts", content=main_ts),

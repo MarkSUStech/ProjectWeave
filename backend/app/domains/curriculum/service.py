@@ -33,16 +33,20 @@ class PlanNotFoundError(PlanError):
         super().__init__(f"plan not found for project: {project_id}", status=404)
 
 
-def seed_project_tasks(db: Session, project_id) -> int:
+def seed_project_tasks(db: Session, project_id, cpp_skip: bool = False) -> int:
     """新项目种子试点课程任务图（P4.1）+ 初始代码与测试文件；幂等。
 
     试点课程替换原样板任务：三个 Markdown 解析任务，由简到繁，
     每个任务绑定独立测试文件与初始代码（浏览器 Worker 单文件执行）。
+    cpp_skip=True（C++ 项目）：不种子 TS 试点任务与文件（不适用；
+    C++ 课程内容待课程制作阶段），返回 0。
     """
     existing = db.scalar(
         select(func.count()).select_from(ProjectTask).where(ProjectTask.project_id == project_id)
     )
     if (existing or 0) > 0:
+        return 0
+    if cpp_skip:
         return 0
     db.add_all(
         ProjectTask(
@@ -266,7 +270,14 @@ def generate_plan(db: Session, project_id: str, bump: bool = False) -> LearningP
         if current is not None:
             return current
 
-    seed_project_tasks(db, project.id)
+    # C++ 项目不种子 TypeScript 试点课程（任务与文件均不适用；C++ 课程内容待制作）
+    from app.domains.projects.service import get_project as _get_project_for_stack
+
+    project = _get_project_for_stack(db, project_id)
+    if any(s.strip().lower() in ("c++", "cpp") for s in (project.stack or [])):
+        seed_project_tasks(db, project.id, cpp_skip=True)
+    else:
+        seed_project_tasks(db, project.id)
     tasks = _topological_tasks(list_tasks(db, project.id))
 
     mastery_map = {
