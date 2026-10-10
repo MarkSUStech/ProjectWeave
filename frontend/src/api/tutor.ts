@@ -7,15 +7,22 @@ import {
   type TutorDecision,
 } from '../types/tutor'
 
+export interface TutorTurnExtras {
+  currentTaskId?: string
+  currentCode?: { path: string; content: string }
+  recentRunResult?: { status: string; summary: string }
+}
+
 export async function createTutorTurn(
   projectId: string,
   question: string,
-  options: { requestAnswerLevel?: boolean } = {},
+  options: { requestAnswerLevel?: boolean; extras?: TutorTurnExtras } = {},
 ): Promise<TutorDecision> {
   const data = await api.post<unknown>('/tutor/turns', {
     projectId,
     question,
     requestAnswerLevel: options.requestAnswerLevel ?? false,
+    ...(options.extras ? { extras: options.extras } : {}),
   })
   return tutorTurnResponseSchema.parse(data).decision
 }

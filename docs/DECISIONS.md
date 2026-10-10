@@ -4,9 +4,19 @@
 
 ---
 
-## D28 · WorkspaceAction：后端分级校验 + 前端确定性执行器（A0/A1/A2），UI 挂载避让并行开发
+## D29 · 任务驱动教学闭环：试点课程 + 任务级测试绑定 + practice 信任级
 
-**背景**：P3.4 落地 §10.2 三级权限。仓库存在并行前端 Agent 正重构 IdePage/MentorPanel——本轮**不编辑这两个宿主文件**，执行器与通知条作为独立模块交付。
+**背景**：P4.1 要求"创建→诊断→路线→IDE→任务→编码→测试→AI 提示→修正→完成→下一任务"全流程真实运行。关键约束：客户端自报测试结果不可视为正式验收（设计 §6.5/§2.3 三种完成状态不可混淆）。
+
+**决策**：
+- **试点课程**（确定性，pilot_course.py）：TS Markdown 解析器 3 任务（标题→行内→模块组合），全部浏览器 Worker 单文件执行（无 import），每任务含初始代码+测试文件+验收条件；项目创建时种子全部文件到 project_files；
+- **ProjectTask 模型扩展**：test_files（任务级测试绑定路径列表）、starter_files（初始代码）、acceptance_criteria（展示给学习者）；迁移 3843e18441fe（SQLite server_default='[]' 后清除，兼容已有行）；
+- **评估 rubric v2（task-scoped）**：只统计任务绑定的 test_files 内的文件结果；**越界文件忽略+告警**；**防伪守卫**——无绑定测试/空文件/零断言 → needs-fix 不判通过；判定是确定性程序（非 AI）；
+- **practice 信任级**：浏览器端测试运行结果始终标记 `trustLevel=practice`（客户端自报，非独立考核）；正式验收（formal）需要服务端可信执行——当前不存在，界面与 API 响应如实标注"练习（客户端自报，非正式验收）"；
+- **Tutor 任务感知**：前端随请求发送 `extras`（currentTaskId / currentCode[服务端截断 2000 字符] / recentRunResult），服务端补充 helpHistory（最近 3 条求助记录）——**最小必要上下文**（§10.3），不发整个项目；
+- **前端 TaskPanel**：任务列表+详情+「运行任务测试并验收」（只跑绑定的 testFiles）→ 逐用例反馈 → 验收结果卡（含 trustLevel/warnings/证据概念）→ 下一步任务引导。
+
+**影响**：runTestSuite 返回值增加 `files` 数组（逐文件结果，向后兼容）；PlanTaskRead 扩展字段（旧客户端可忽略新字段）；正式能力认证需等远程沙箱阶段的服务端可信执行；两个后续任务（md-inline/md-module）已定义全部内容但仅 md-heading 完成真实端到端验证。
 
 **决策**：
 - **后端（提案侧）**：TeachingDecision 新增 `workspace_actions`；`validate_workspace_actions` 确定性分级（display-notice→A0 / switch-layout→A1 / propose-patch→A2）+ payload 校验（模式白名单/消息必填/path+description 必填）+ 数量封顶 3；**A2 补丁提案未随 requestAnswerLevel 时移除**（与 D23 H4 门控联动——补丁即答案级内容）；非法动作移除并记入 outcome_reason（部分降级而非整体拒绝）；系统提示词输出结构扩展 workspaceActions。
@@ -16,6 +26,17 @@
 **影响**：P3 全部条目交付（挂载为收尾一行）；A2 确认应用草稿后 H4 的独立性重测可引用 workspace-action 事件；撤销栈为会话级（不持久化，与设计 §10.2 undoToken 语义一致——token=decisionId:index）。
 
 **端到端集成追记（同日）**：并行前端合入后完成挂载——MentorPanel 对**新决策**执行 applyWorkspaceActions（历史决策不重放，避免加载时重演布局切换）；CodeDiff 差异弹窗加确认/拒绝（`confirmPatchAction` 按动作确认，非仅队列）；IdePage 提供**脏草稿守卫**（目标文件未打开或有未保存更改 → 拒绝应用并说明原因，保护用户输入）；**自动保存承诺对齐**——应用补丁必然被 2.5s 防抖保存，故文案改为"写入草稿并随自动保存保存到服务器，应用前内容进入历史快照（D15）可恢复"，UI 承诺与实际行为一致；apply 回调签名改为 `PatchApplyResult {applied, reason?}` 以区分拒绝原因。
+
+---
+
+## D28 · WorkspaceAction：后端分级校验 + 前端确定性执行器（A0/A1/A2），UI 挂载避让并行开发
+
+**背景**：P3.4 落地 §10.2 三级权限。仓库存在并行前端 Agent 正重构 IdePage/MentorPanel——本轮**不编辑这两个宿主文件**，执行器与通知条作为独立模块交付。
+
+**决策**：
+- **后端（提案侧）**：TeachingDecision 新增 `workspace_actions`；`validate_workspace_actions` 确定性分级（display-notice→A0 / switch-layout→A1 / propose-patch→A2）+ payload 校验（模式白名单/消息必填/path+description 必填）+ 数量封顶 3；**A2 补丁提案未随 requestAnswerLevel 时移除**（与 D23 H4 门控联动——补丁即答案级内容）；非法动作移除并记入 outcome_reason（部分降级而非整体拒绝）。
+- **前端（执行侧）**：`lib/workspace/executor.ts` 确定性执行链——A0 立即通知；**A1 尊重布局锁定**（锁定→拒绝+原因+rejected 事件，AT-05；未锁定→切换+撤销栈，撤销同样受锁定约束）；**A2 一律进确认队列**（确认后仅写编辑器草稿）；每个动作上报 `workspace-action` 审计事件。
+- **端到端集成追记**：MentorPanel 对**新决策**执行 applyWorkspaceActions（历史不重放）；CodeDiff 弹窗加确认/拒绝；IdePage 挂载 WorkspaceNoticeStrip + 脏草稿守卫（未打开/未保存 → 拒绝应用）；自动保存承诺对齐——应用补丁必然被保存，文案如实"写入草稿并随自动保存保存，应用前内容进入历史快照"。
 
 ---
 
@@ -361,3 +382,27 @@
 **验收发现修复**：原 TS 单文件种子 export 生成全局 exports 引用，Worker 报 ReferenceError；现使用 CommonJS 输出加局部 exports 的 async 包装，await 完成后才结束，保留不支持多文件 import 的边界，并以真实 Worker 脚本执行回归。保存后 updatedAt 更新会刷新历史列表，避免 Diff 入口直到切换文件才出现。Diff 包装库默认在 widget 解绑前释放模型会抛异常；现由父 layout cleanup 先解绑、释放模型，再由库释放 widget，既不吞异常也不保留泄漏模型，3次真实开关复测通过。
 
 **验证**：npm run verify 191 用例/typecheck/build 通过；后端 123 passed / 4 skipped；1440×900 / 1920×1080 真实浏览器编辑、保存、Diff、运行/测试、分栏/锁定与知识图验收。真实 LLM 提案仅做契约/UI fixture 验证，本轮禁用 AI Provider。
+
+## D30 · 自由工作区使用 Dockview，稳定宿主保留编辑状态
+
+**日期**：2026-10-10。
+
+**背景**：用户要求编辑器各板块可自由挪动与显隐；固定分栏只能调尺寸，无法表达自由停靠/合并/悬浮。
+
+**决策**：以 DockviewReact 8.4.1（MIT）替换 IDE 固定分栏，注册 9 个真实面板。四模式只提供预设，按项目和模式保存版本化布局；顶栏提供始终可达的显隐和重置。所有动作服从 ideUiStore 实时锁定；布局持久化校验白名单/有限树结构并剥离业务参数。使用稳定 DOM 宿主 + React portal，停靠组件只挂载宿主，使 Monaco 与导师内容在移动/隐藏/模式切换时保持；布局边界 overflow-clip 隔离屏幕外渲染内容。
+
+**理由**：成熟开源停靠能力满足真实自由布局；保留编辑器实例可以避免用户撤销记录/导师输入在布局操作中丢失，业务 API 与 Worker 无需改造。
+
+**取舍**：IDE 路由 JS 655.22 / gzip 166.03 kB，继续 lazy 加载并保留构建警告。只支持工作区内悬浮；未安装 Enterprise，v8 商业 keyboardNavigation 不启用，键盘用户使用 Radix 菜单完成布局操作。页面刷新恢复布局，不承诺刷新恢复 Monaco undo 或未发送导师输入。
+
+**验证**：npm run verify 201 用例/typecheck/build 通过；新增 6 个实际库测试；浏览器拖动合并/拆分、缩放、锁定拒绝、模式/刷新恢复、Monaco 隐藏恢复后撤销与真实 Worker/2 个种子测试通过。许可完整保留于 public/licenses/dockview.txt。
+
+## D31 · 外观浏览器存储与编辑实例实时配置
+
+**日期**：2026-10-10。
+
+**决策**：以独立 appearanceStore 和版本化 zod 白名单保存当前浏览器外观，复用 Radix 设置原语；共用 token 驱动页面/知识图，编辑器和终端实例更新 options 与主题，避免重建。SettingsDialog 在设置按钮位置挂载，以获取当前 IDE 布局控制器。减少动态效果取用户关闭或系统减少动态效果的并集。
+
+**理由**：全站即时预览与可恢复默认满足高度自定义需求；与项目布局和服务端 AI 介入模式分离，避免恢复外观意外改变教学行为。稳定 Monaco 模型保留撤销和草稿。
+
+**边界**：本机字体回退；相对字号不等同浏览器缩放；不支持任意 CSS、跨设备同步、已开标签页实时同步。存储异常明确显示，当前更改继续生效。布局重置仍服从锁定且只作用当前模式。完整选项与验证见 UI_COMPONENTS.md。

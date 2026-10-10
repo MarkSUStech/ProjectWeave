@@ -22,6 +22,14 @@ export interface TestSuiteSummary {
   totalPassed: number
   totalFailed: number
   errorFiles: number
+  /** 逐文件结果（P4.1：任务级评估需要）。 */
+  files: Array<{
+    path: string
+    status: string
+    passed: number
+    failed: number
+    totalCases: number
+  }>
 }
 
 export interface RunTestSuiteOptions {
@@ -40,7 +48,7 @@ export async function runTestSuite(
   const testPaths = files.map((file) => file.path).filter(isTestPath)
   const store = useTestStore.getState()
   if (store.running || testPaths.length === 0) {
-    return { totalFiles: testPaths.length, totalPassed: 0, totalFailed: 0, errorFiles: 0 }
+    return { totalFiles: testPaths.length, totalPassed: 0, totalFailed: 0, errorFiles: 0, files: [] }
   }
 
   useRunStore.getState().setActiveTab('tests')
@@ -50,7 +58,7 @@ export async function runTestSuite(
   // 版本绑定：traceId + 全部被执行内容（草稿优先）的联合指纹（§14.3）。
   const traceId = crypto.randomUUID()
   const executedContents: string[] = []
-  const summary: TestSuiteSummary = { totalFiles: testPaths.length, totalPassed: 0, totalFailed: 0, errorFiles: 0 }
+  const summary: TestSuiteSummary = { totalFiles: testPaths.length, totalPassed: 0, totalFailed: 0, errorFiles: 0, files: [] }
 
   for (const path of testPaths) {
     let result: TestFileResult
@@ -84,6 +92,13 @@ export async function runTestSuite(
     summary.totalPassed += result.cases.filter((c) => c.status === 'passed').length
     summary.totalFailed += result.cases.filter((c) => c.status === 'failed').length
     if (result.status === 'error') summary.errorFiles += 1
+    summary.files.push({
+      path: result.path,
+      status: result.status,
+      passed: result.cases.filter((c) => c.status === 'passed').length,
+      failed: result.cases.filter((c) => c.status === 'failed').length,
+      totalCases: result.cases.length,
+    })
     useTestStore.getState().appendFileResult(result)
   }
 

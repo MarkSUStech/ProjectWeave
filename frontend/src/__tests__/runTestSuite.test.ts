@@ -77,7 +77,7 @@ describe('runTestSuite', () => {
     expect(mockedRunTests).toHaveBeenNthCalledWith(1, 'content-of-src/a.test.ts', expect.anything())
     expect(mockedRunTests).toHaveBeenNthCalledWith(2, 'content-of-src/b.test.js', expect.anything())
 
-    expect(summary).toEqual({ totalFiles: 2, totalPassed: 2, totalFailed: 1, errorFiles: 0 })
+    expect(summary.totalFiles).toBe(2); expect(summary.totalPassed).toBe(2); expect(summary.totalFailed).toBe(1); expect(summary.errorFiles).toBe(0)
     const state = useTestStore.getState()
     expect(state.running).toBe(false)
     expect(state.progress).toEqual({ done: 2, total: 2 })
@@ -107,7 +107,7 @@ describe('runTestSuite', () => {
     mockedRunTests.mockResolvedValue(fakeOutcome([{ name: 'x', status: 'passed', durationMs: 1 }]))
 
     const summary = await runTestSuite('p1', [meta('bad.test.ts'), meta('good.test.ts')])
-    expect(summary).toEqual({ totalFiles: 2, totalPassed: 1, totalFailed: 0, errorFiles: 1 })
+    expect(summary.totalFiles).toBe(2); expect(summary.totalPassed).toBe(1); expect(summary.totalFailed).toBe(0); expect(summary.errorFiles).toBe(1)
     const results = useTestStore.getState().results
     expect(results[0]).toMatchObject({ path: 'bad.test.ts', status: 'error', error: '网络错误' })
     expect(results[1]).toMatchObject({ path: 'good.test.ts', status: 'passed' })
@@ -127,7 +127,7 @@ describe('runTestSuite', () => {
 
   it('没有测试文件时不进入运行状态', async () => {
     const summary = await runTestSuite('p1', [meta('src/main.ts'), meta('README.md')])
-    expect(summary).toEqual({ totalFiles: 0, totalPassed: 0, totalFailed: 0, errorFiles: 0 })
+    expect(summary).toEqual({ totalFiles: 0, totalPassed: 0, totalFailed: 0, errorFiles: 0, files: [] })
     expect(useTestStore.getState().running).toBe(false)
     expect(mockedRunTests).not.toHaveBeenCalled()
   })

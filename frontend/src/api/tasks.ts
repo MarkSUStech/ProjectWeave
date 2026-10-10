@@ -9,15 +9,22 @@ export const evaluationResultSchema = z.object({
   passed: z.boolean(),
   rubricVersion: z.string(),
   evidenceConcepts: z.array(z.string()),
+  warnings: z.array(z.string()).default([]),
+  trustLevel: z.enum(['practice', 'formal']).default('practice'),
 })
 
 export type EvaluationResult = z.infer<typeof evaluationResultSchema>
 
+export interface EvaluationFileResult {
+  path: string
+  status: string
+  passed: number
+  failed: number
+  totalCases: number
+}
+
 export interface EvaluationSuiteInput {
-  totalFiles: number
-  totalPassed: number
-  totalFailed: number
-  errorFiles: number
+  files: EvaluationFileResult[]
   traceId?: string | null
 }
 

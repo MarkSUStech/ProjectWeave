@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.domains.concepts.models import KnowledgeConcept
 from app.domains.curriculum.models import LearningPlan, ProjectTask
+from app.domains.curriculum.pilot_course import PILOT_COURSE_TASKS, PILOT_TEST_FILE_CONTENTS
 from app.domains.curriculum.templates import SAMPLE_COURSE_TASKS
 from app.domains.learner.models import LearningEvidence, LearnerMastery
 from app.domains.projects.service import ProjectNotFoundError, get_project
@@ -33,7 +34,11 @@ class PlanNotFoundError(PlanError):
 
 
 def seed_project_tasks(db: Session, project_id) -> int:
-    """新项目种子样板任务图；已有任务则跳过（幂等）。"""
+    """新项目种子试点课程任务图（P4.1）+ 初始代码与测试文件；幂等。
+
+    试点课程替换原样板任务：三个 Markdown 解析任务，由简到繁，
+    每个任务绑定独立测试文件与初始代码（浏览器 Worker 单文件执行）。
+    """
     existing = db.scalar(
         select(func.count()).select_from(ProjectTask).where(ProjectTask.project_id == project_id)
     )
@@ -50,9 +55,28 @@ def seed_project_tasks(db: Session, project_id) -> int:
             required_concepts=t["requiredConcepts"],
             deliverable=t["deliverable"],
             effort_band=t["effortBand"],
+            test_files=t.get("testFiles", []),
+            starter_files=t.get("starterFiles", []),
+            acceptance_criteria=t.get("acceptanceCriteria", []),
         )
-        for t in SAMPLE_COURSE_TASKS
+        for t in PILOT_COURSE_TASKS
     )
+    # 种子初始代码与测试文件到 project_files
+    from app.domains.projects.models import ProjectFile
+
+    for task in PILOT_COURSE_TASKS:
+        for starter in task.get("starterFiles", []):
+            db.add(
+                ProjectFile(
+                    project_id=project_id,
+                    path=starter["path"],
+                    content=starter["content"],
+                )
+            )
+        for test_path in task.get("testFiles", []):
+            content = PILOT_TEST_FILE_CONTENTS.get(test_path, "")
+            if content:
+                db.add(ProjectFile(project_id=project_id, path=test_path, content=content))
     db.commit()
     return len(SAMPLE_COURSE_TASKS)
 
@@ -71,7 +95,7 @@ def list_tasks(db: Session, project_id) -> list[ProjectTask]:
 # 阶段验收（设计 §2.3 任务实现通过 / §6.5 判定由确定性程序完成）
 # ---------------------------------------------------------------------------
 
-EVALUATION_RUBRIC_VERSION = "suite-green-v1"
+EVALUATION_RUBRIC_VERSION = "task-scoped-v2"
 
 
 class TaskNotFoundError(PlanError):
@@ -95,16 +119,19 @@ def evaluate_task(
     project_id,
     task_id: str,
     suite: "dict",
-) -> tuple[ProjectTask, bool, list[str]]:
-    """按测试套件结果做确定性验收。
+) -> tuple[ProjectTask, bool, list[str], list[str]]:
+    """任务级确定性验收（P4.1：绑定 test_files，防伪守卫，practice 信任级）。
 
-    MVP rubric（D27）：项目测试套件全绿（≥1 个测试文件、0 失败、0 文件级错误）
-    → 任务 done；否则 needs-fix。判定是程序而非 AI（设计 §6.5）。
-    返回 (任务, 是否通过, 依赖缺失列表)；依赖校验失败抛 PlanError(422)。
+    rubric v2：仅统计任务绑定的测试文件结果；至少 1 个绑定测试文件、
+    0 失败、0 文件级错误、总用例数 ≥1 → done。判定是程序而非 AI。
+
+    防伪守卫（任务约束 3）：客户端自报结果标记为 practice（非正式验收）；
+    无绑定测试/空结果/零断言不判通过。返回 (任务, 是否通过, 依赖缺失, 告警)。
     """
     task = get_task(db, project_id, task_id)
+    warnings: list[str] = []
 
-    # 依赖闸门：先修任务未完成时不可验收（设计 §5.3 任务图语义）
+    # 依赖闸门
     blocked: list[str] = []
     by_id = {t.task_id: t for t in list_tasks(db, project_id)}
     for dependency in task.depends_on or []:
@@ -114,15 +141,41 @@ def evaluate_task(
     if blocked:
         raise PlanError(f"前置任务尚未完成：{', '.join(sorted(blocked))}", status=422)
 
-    total_files = int(suite.get("totalFiles", 0))
-    total_failed = int(suite.get("totalFailed", 0))
-    error_files = int(suite.get("errorFiles", 0))
-    passed = total_files >= 1 and total_failed == 0 and error_files == 0
+    # 守卫 1：任务必须绑定测试文件
+    bound_tests = list(task.test_files or [])
+    if not bound_tests:
+        warnings.append("任务未绑定测试文件——无法可信评估")
+        task.status = "needs-fix"
+        db.commit()
+        db.refresh(task)
+        return task, False, blocked, warnings
+
+    # 守卫 2：客户端只上报了绑定测试的结果（不能拿全项目套件充当）
+    reported_files = suite.get("files", [])
+    reported_paths = {f.get("path") for f in reported_files if isinstance(f, dict)}
+    scoped_files = [f for f in reported_files if isinstance(f, dict) and f.get("path") in bound_tests]
+    out_of_scope = [p for p in reported_paths if p not in bound_tests]
+    if out_of_scope:
+        warnings.append(f"忽略非本任务测试文件：{out_of_scope}")
+
+    # 守卫 3：零用例/零断言不判通过
+    total_cases = sum(int(f.get("totalCases", 0)) for f in scoped_files)
+    if not scoped_files or total_cases == 0:
+        warnings.append("没有执行的测试用例——练习结果不可为通过（防伪）")
+        task.status = "needs-fix"
+        db.commit()
+        db.refresh(task)
+        return task, False, blocked, warnings
+
+    # 判定（只看 scoped_files）
+    total_failed = sum(int(f.get("failed", 0)) for f in scoped_files)
+    error_files = sum(1 for f in scoped_files if f.get("status") == "error")
+    passed = total_failed == 0 and error_files == 0
 
     task.status = "done" if passed else "needs-fix"
     db.commit()
     db.refresh(task)
-    return task, passed, blocked
+    return task, passed, blocked, warnings
 
 
 def get_current_plan(db: Session, project_id) -> LearningPlan | None:

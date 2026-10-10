@@ -84,7 +84,7 @@ def evaluate_task(
     try:
         pid = parse_project_id(project_id)
         get_project(db, project_id)  # 项目存在性校验（404）
-        task, passed, _blocked = service.evaluate_task(
+        task, passed, _blocked, warnings = service.evaluate_task(
             db,
             pid,
             task_id,
@@ -128,10 +128,10 @@ def evaluate_task(
         payload={
             "taskId": task.task_id,
             "passed": passed,
-            "totalFiles": payload.totalFiles,
-            "totalPassed": payload.totalPassed,
-            "totalFailed": payload.totalFailed,
-            "errorFiles": payload.errorFiles,
+            "trustLevel": "practice",
+            "scopedFiles": [f.path for f in payload.files],
+            "totalFailed": sum(f.failed for f in payload.files),
+            "warnings": warnings,
             "traceId": payload.traceId,
         },
     )
@@ -141,4 +141,6 @@ def evaluate_task(
         passed=passed,
         rubricVersion=service.EVALUATION_RUBRIC_VERSION,
         evidenceConcepts=concepts,
+        warnings=warnings,
+        trustLevel="practice",
     )

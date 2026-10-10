@@ -15,6 +15,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { Button } from '../ui/Button'
 import { MessageSquare, Send } from 'lucide-react'
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/upstream/dialog'
+import { useUiReducedMotion } from '../../hooks/useUiReducedMotion'
 
 const CodeDiff = lazy(() => import('./CodeDiff'))
 type CurrentFile = { path: string; content: string }
@@ -82,12 +83,19 @@ export function MentorPanel({
   projectId,
   currentFile,
   onApplyPatch,
+  currentTaskId,
+  recentRunResult,
 }: {
   projectId: string
   currentFile?: CurrentFile
   /** A2 补丁应用回调（宿主提供，含未保存更改守卫）。 */
   onApplyPatch: (path: string, content: string) => PatchApplyResult
+  /** 当前学习任务 ID（P4.1：随请求发送，让 Tutor 获得任务感知上下文）。 */
+  currentTaskId?: string | null
+  /** 最近一次运行/测试结果摘要。 */
+  recentRunResult?: { status: string; summary: string } | null
 }) {
+  const reduced = useUiReducedMotion()
   const [decisions, setDecisions] = useState<TutorDecision[] | null>(null)
   const [unconfigured, setUnconfigured] = useState(false)
   const [question, setQuestion] = useState('')
@@ -124,6 +132,13 @@ export function MentorPanel({
     try {
       const decision = await createTutorTurn(projectId, trimmed, {
         requestAnswerLevel: requestAnswer,
+        extras: {
+          currentTaskId: currentTaskId ?? undefined,
+          currentCode: currentFile
+            ? { path: currentFile.path, content: currentFile.content.slice(0, 2000) }
+            : undefined,
+          recentRunResult: recentRunResult ?? undefined,
+        },
       })
       setQuestion('')
       setRequestAnswer(false)
@@ -170,7 +185,7 @@ export function MentorPanel({
           </div>
         )}
         {decisions?.map((decision) => <AnimatedGroup key={decision.id} preset="fade"><DecisionBubble decision={decision} currentFile={currentFile} projectId={projectId} onApplyPatch={onApplyPatch} /></AnimatedGroup>)}
-        <AnimatePresence>{sending && <motion.p role="status" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-xs text-accent">思考中…</motion.p>}</AnimatePresence>
+        <AnimatePresence>{sending && <motion.p role="status" initial={{ opacity: reduced ? 1 : 0 }} animate={{ opacity: 1 }} exit={{ opacity: reduced ? 1 : 0 }} transition={{ duration: reduced ? 0 : 0.2 }} className="text-xs text-accent">思考中…</motion.p>}</AnimatePresence>
         {error && (
           <p role="alert" className="rounded border border-danger/40 bg-danger/10 px-2 py-1.5 text-xs text-danger">
             {error}

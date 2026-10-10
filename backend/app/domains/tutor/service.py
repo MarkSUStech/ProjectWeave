@@ -77,15 +77,20 @@ class TutorError(Exception):
         super().__init__(message)
 
 
-def build_context(db: Session, project) -> dict:
+def build_context(db: Session, project, extras: "dict | None" = None) -> dict:
     """确定性组装教学上下文（设计 §10.3 最小化采集 + §13.2 只读工具的 MVP 形态）。
 
     只读取各领域的模型表（不调用其他领域的 service，遵循 AGENTS 边界规则）。
+    extras 由前端随请求发送：当前任务 ID、正在编辑的代码、最近运行结果——
+    最小必要原则，不把整个项目发给 LLM。
     """
+    extras = extras or {}
+
     plan = db.scalar(
         select(LearningPlan)
         .where(LearningPlan.project_id == project.id)
         .order_by(LearningPlan.plan_version.desc())
+        .limit(1)
         .limit(1)
     )
     activities = []
@@ -121,12 +126,48 @@ def build_context(db: Session, project) -> dict:
             .order_by(ProjectTask.milestone)
         )
     )
+    task_summaries = [
+        {"taskId": t.task_id, "title": t.title, "status": t.status} for t in tasks[:6]
+    ]
+
+    # 当前任务详情（前端发送 currentTaskId 时）
+    current_task = None
+    current_task_id = extras.get("currentTaskId")
+    if current_task_id:
+        task = next((t for t in tasks if t.task_id == current_task_id), None)
+        if task is not None:
+            current_task = {
+                "taskId": task.task_id,
+                "title": task.title,
+                "description": task.description,
+                "goal": task.deliverable,
+                "requiredConcepts": task.required_concepts,
+                "status": task.status,
+            }
+
+    # 最近求助记录（教学历史，最小条数）
+    recent_help = list(db.scalars(
+        select(TeachingDecision)
+        .where(TeachingDecision.project_id == project.id)
+        .order_by(TeachingDecision.created_at.desc())
+        .limit(3)
+    ))
+    help_history = [
+        {"question": d.question[:100], "intent": d.intent, "hintLevel": d.hint_level}
+        for d in reversed(recent_help)
+    ]
+
     return {
         "project": {"title": project.title, "stack": project.stack, "description": project.description[:300]},
         "nextActivities": activities,
-        "tasks": [{"taskId": t.task_id, "title": t.title, "status": t.status} for t in tasks[:6]],
+        "tasks": task_summaries,
+        "currentTask": current_task,
         "mastery": mastery,
         "recentEvents": recent_events,
+        # 前端提供的实时编辑上下文（最小必要）
+        "currentCode": extras.get("currentCode"),  # {path, content(截断)}
+        "recentRunResult": extras.get("recentRunResult"),  # {status, summary}
+        "helpHistory": help_history,
     }
 
 
@@ -213,6 +254,7 @@ def policy_gate(proposal: dict, request_answer_level: bool = False) -> tuple[dic
 def create_turn(
     db: Session, project_id: str, question: str, provider,
     request_answer_level: bool = False, trigger: str = "user",
+    extras: "dict | None" = None,
 ) -> TeachingDecision:
     """一次教学回合：上下文 → LLM → Policy Gate → 落库。"""
     try:
@@ -220,7 +262,7 @@ def create_turn(
     except ProjectNotFoundError as exc:
         raise TutorError("project not found", status=404) from exc
 
-    context = build_context(db, project)
+    context = build_context(db, project, extras)
     result: LLMResult = provider.chat(SYSTEM_PROMPT, build_user_prompt(question, context))
 
     try:

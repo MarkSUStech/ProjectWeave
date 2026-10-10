@@ -39,7 +39,13 @@ class ProjectTask(Base):
     required_concepts: Mapped[list] = mapped_column(JSONType, default=list)  # conceptId 列表
     deliverable: Mapped[str] = mapped_column(String(500), default="")
     effort_band: Mapped[str] = mapped_column(String(10), default="medium")  # small/medium/large
-    # pending / in-progress / done
+    # 任务绑定的测试文件路径（任务级验收只看这些文件）
+    test_files: Mapped[list] = mapped_column(JSONType, default=list)
+    # 任务初始代码 [{path, content}]，项目创建时种子到 project_files
+    starter_files: Mapped[list] = mapped_column(JSONType, default=list)
+    # 验收条件（人可读描述，展示给学习者）
+    acceptance_criteria: Mapped[list] = mapped_column(JSONType, default=list)
+    # pending / in-progress / done / needs-fix
     status: Mapped[str] = mapped_column(String(20), default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

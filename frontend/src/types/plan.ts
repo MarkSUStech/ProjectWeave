@@ -30,6 +30,12 @@ export const planTaskSchema = z.object({
   milestone: z.number().int(),
   title: z.string(),
   status: z.string(),
+  description: z.string().default(''),
+  requiredConcepts: z.array(z.string()).default([]),
+  deliverable: z.string().default(''),
+  testFiles: z.array(z.string()).default([]),
+  acceptanceCriteria: z.array(z.string()).default([]),
+  dependsOn: z.array(z.string()).default([]),
 })
 
 export const planDetailSchema = z.object({

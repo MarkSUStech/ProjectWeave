@@ -59,7 +59,7 @@ const detail: PlanDetail = {
     reason: '基于学习证据生成（累计 16 条；掌握阈值 0.75 / 置信阈值 0.5）',
     createdAt: '2026-10-10T10:00:00Z',
   },
-  tasks: [{ taskId: 'task-scaffold', milestone: 1, title: '建立页面骨架', status: 'pending' }],
+  tasks: [{ taskId: 'task-scaffold', milestone: 1, title: '建立页面骨架', status: 'pending', description: '', requiredConcepts: [], deliverable: '', testFiles: [], acceptanceCriteria: [], dependsOn: [] }],
 }
 
 beforeEach(() => {

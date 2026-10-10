@@ -97,13 +97,7 @@ export default function ProjectDetailPage() {
         const files = await listFiles(id)
         const summary = await runTestSuite(id, files)
         const traceId = useRunStore.getState().trace?.traceId ?? null
-        await evaluateTask(id, taskId, {
-          totalFiles: summary.totalFiles,
-          totalPassed: summary.totalPassed,
-          totalFailed: summary.totalFailed,
-          errorFiles: summary.errorFiles,
-          traceId,
-        })
+        await evaluateTask(id, taskId, { files: summary.files, traceId })
         // 刷新计划（任务状态）与诊断/证据相关数据
         setPlan(await getPlan(id))
       } catch (err) {

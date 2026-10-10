@@ -36,6 +36,7 @@ def create_turn(payload: TutorTurnRequest, db: Session = Depends(get_db)) -> Tut
             payload.question,
             provider,
             request_answer_level=payload.requestAnswerLevel,
+            extras=payload.extras.model_dump(by_alias=True) if payload.extras else None,
         )
     except TutorError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc

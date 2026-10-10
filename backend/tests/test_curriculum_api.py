@@ -47,24 +47,22 @@ def test_plan_generates_task_graph_and_all_learning_activities(curriculum_client
     body = resp.json()
 
     # 任务图：样板课程 6 任务
-    assert len(body["tasks"]) == 6
-    assert body["tasks"][0]["taskId"] == "task-scaffold"
+    assert len(body["tasks"]) == 3  # P4.1 试点课程 3 任务
+    assert body["tasks"][0]["taskId"] == "md-heading"
     assert body["tasks"][0]["milestone"] == 1
 
     plan = body["plan"]
     assert plan["planVersion"] == 1
     learn = [a for a in plan["activities"] if a["type"] == "learn-concept"]
     practice = [a for a in plan["activities"] if a["type"] == "practice-task"]
-    assert len(practice) == 6
+    assert len(practice) == 3
 
     # 未诊断：所有直接要求概念及其先修闭包都要学（含未诊断的概念）
-    direct = {"browser.dom", "js.objects", "js.callbacks-events", "js.strings", "js.functions",
-              "browser.storage", "js.arrays", "eng.errors", "eng.testing", "eng.modules",
-              "ts.annotations"}
+    direct = {"js.strings", "js.control-flow", "js.functions", "eng.modules"}
     planned = {a["conceptId"] for a in learn}
     assert direct <= planned
-    # 先修闭包：js.callbacks-events 的先修 js.closures 应被包含
-    assert "js.closures" in planned
+    # 先修链：js.functions 的先修 js.control-flow 应被包含（试点课程概念图）
+    assert "js.control-flow" in planned
     assert all(a["reason"] for a in plan["activities"])
     assert plan["skipped"] == []
     # 顺序编号连续且学习活动先于同任务实践

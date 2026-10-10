@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-10（P3 基础能力与前端开源组件重建切片；未实现项见下）
+更新时间：2026-10-11（P4.1 试点课程任务驱动教学闭环）
 
 ## 已完成（经过验证）
 
@@ -8,13 +8,31 @@
 
 - [x] 统一深色设计 token、shadcn/Radix 基础控件与真实命令搜索；文件操作/快照恢复使用 Dialog，文件菜单使用 DropdownMenu，Tabs 支持方向键与面板关联。
 - [x] Monaco 主题与只读 Diff（真实历史快照 / Tutor 返回的代码提案）；原文件保存、自动保存、运行、测试、教学证据与 Policy Gate 保留。保存后快照列表立即刷新；TS 种子 export 在单文件 Worker 中可真实执行，不承诺跨文件 import。Diff 关闭时先解除模型绑定再释放，3次浏览器开关复测无错误。
-- [x] react-resizable-panels v4 + shadcn Resizable：四模式工作区、鼠标/键盘调尺寸、最小尺寸、每模式本地保存、布局锁定。
+- [x] 初次重建使用 react-resizable-panels v4 + shadcn Resizable；现已由下述 Dockview 自由布局替换。
 - [x] xterm + FitAddon 展示真实 Worker 输出；明确远程 Shell 未连接（P4）；React Flow + ELK 展示知识库真实先修图与掌握证据（17 节点 / 21 边本机验收）。
 - [x] Motion 页面/模式/画布/折叠/思考状态动画；Motion Primitives Mentor 消息淡入；Magic UI 项目卡片 BlurFade；减少动态效果分支及公共组件交互单测。
 - [x] `docs/UI_COMPONENTS.md` 记录实际使用、版本、来源、许可证（ELK 选择 EPL-2.0）、设计系统、性能限制和后续范围；完整许可证与源码获取声明随 public 发布。
 - [x] 验证：`npm run verify`（32 文件 / 191 用例、typecheck、build）通过；后端 pytest 123 passed / 4 skipped（本轮未跑可选 PG）；1440×900 和 1920×1080 浏览器验收，真实编辑保存、Diff、输出、2 个种子测试、observe 变量、菜单/命令/布局与知识图。
 - [x] 视觉细化：按用户确认的石墨灰＋柔紫统一首页/知识页/工作区、Monaco/xterm/知识图配色；扩大标题与代码字号、减少描边和整块高亮、统一 Mentor 输入框；场景采用中文标题并保留模板/交互详情。再次 `npm run verify` 191 用例全过；1440/1920 工作区与390px 首页无横向溢出、真实运行正常；未改后端。
-- [ ] 架构/任务/状态机图、行内教学高亮、WorkspaceAction 宿主应用确认、课程状态反馈动画、远程 Shell、大图性能优化仍为后续；没有业务 mock 或伪造成功结果。
+- [ ] 架构/任务/状态机图、行内教学高亮、课程状态反馈动画、远程 Shell、大图性能优化仍为后续；WorkspaceAction 宿主应用确认已在 P3.4 切片接入；没有业务 mock 或伪造成功结果。
+
+### 编辑器自由视图（增量切片）
+
+- [x] DockviewReact 8.4.1（MIT）替换固定分栏；9 个真实面板独立拖动停靠、边缘拆分/中央标签合并、缩放、页内悬浮、隐藏/显示；菜单支持四边移动/指定合并，停靠组可专注。
+- [x] 顶栏「视图」与命令搜索提供面板恢复和当前模式重置入口，全部隐藏后仍可恢复；按项目与模式自动保存/刷新恢复；只持久化布局结构，损坏回退并可见报错。
+- [x] 实时布局锁定覆盖显隐/拖动/缩放/移动/合并/悬浮/专注/重置；稳定 portal 保持 Monaco 撤销与导师输入，防止焦点把顶栏滚出视口；保留文件 API、Worker、教学管线及 P3.4 补丁安全流程。
+- [x] `npm run verify`：33 文件 / 201 用例、typecheck、build 全过；新增 6 个实际 Dockview 测试；浏览器中央合并、边缘拆分、缩放、锁定、切换模式与刷新恢复通过，Monaco 隐藏恢复后可撤销，导师输入保持，真实运行与 2 个种子测试通过。
+- [x] 许可证随 public 发布；未引入 Enterprise，Radix 菜单提供键盘操作；悬浮在工作区内，不创建浏览器弹出窗口。下载体积与具体边界记录在 UI_COMPONENTS.md；本轮未改后端。
+
+### 界面设置与外观自定义（增量切片）
+
+- [x] 首页/知识页等全站顶栏与 IDE 顶栏增加「设置」，Ctrl/Cmd+K 提供同一入口；复用 Radix Dialog/Tabs/RadioGroup/Switch，支持键盘与焦点返回。
+- [x] 3 种主题、自定义强调色（色板/颜色选择/十六进制输入）、界面相对字号、密度、圆角、背景纹理、卡片阴影与动效；默认保持石墨灰＋柔紫，开启动效仍尊重系统减少动态效果。
+- [x] Monaco/只读 Diff 字体、字号、行高、换行、行号、缩略图、连字及 xterm 字号实时更新；主题切换不重建编辑器，保留撤销与真实运行输出。浅色终端日志使用可读前景色。
+- [x] 工作区设置连接真实 9 面板显隐/布局锁定/当前模式恢复，所有布局调整遵守锁定；恢复外观不重置布局与 AI 偏好。
+- [x] 版本化 `pw-appearance-v1` 仅在当前浏览器保存，经 zod 白名单/范围校验；损坏或存储不可用显式提示并回退；不提供任意 CSS 注入或跨设备同步。
+- [x] 设置/实际 Dockview/公共 UI 定向测试 25 个通过；`npm run verify` typecheck、34 文件 / 212 用例、build 全过。浏览器主题、代码/终端选项、刷新恢复、Monaco 撤销、显隐与锁定、390px 首页与 120% 字号检查通过；体积与边界见 UI_COMPONENTS.md 本切片记录。
+- [x] 修复首页整屏最小高度叠加 64px 顶栏造成的多余滚动：AppShell 固定为 100dvh，导航/顶栏保持，正文 flex 剩余高度独立滚动。1920×1080 单项目无滚动；展开长表单、390×844 手机正文可用键盘滚至页尾，document 不滚动；再次 `npm run verify` 212 用例/typecheck/build 全过。
 
 ### P0 基础
 
@@ -184,6 +202,42 @@
       A 未锁定切换+撤销恢复/B 锁定拒绝布局不变/C 未确认源码不变/
       D 差异弹窗确认后才 applyPatch/拒绝清队列；executor 测试适配
       PatchApplyResult 签名）；npm run verify 全过；后端 API 契约零改动
+
+### P4 任务驱动教学闭环（进行中）
+
+- [x] **P4.1 试点课程：TypeScript Markdown 解析器**（三个任务由简到繁，
+      全部浏览器 Worker 单文件执行，无 import）
+  - **后端模型扩展**：ProjectTask 新增 test_files/starter_files/
+    acceptance_criteria 三列（迁移 3843e18441fe，SQLite server_default
+    兼容）；试点课程模板 pilot_course.py（确定性内容，含逐任务初始
+    代码与测试文件定义）
+  - **种子**：项目创建时自动种子 3 个任务 + 6 个文件（初始代码 3 + 测试
+    3）到 project_files
+  - **任务级评估（rubric v2 task-scoped）**：evaluate 只统计任务绑定的
+    test_files（越界文件忽略+告警）；**防伪守卫**：无绑定测试/空文件列表/
+    零断言 → needs-fix 不判通过；**practice 信任级**——客户端自报结果
+    始终标记 practice，不授予正式能力认证（服务端可信执行未建成前，
+    界面与文档如实标注）；学习证据按任务 requiredConcepts 写 coding/
+    application 维；task-evaluated 事件含 trustLevel + scopedFiles
+  - **Tutor 任务感知**：build_context 接受前端 extras（currentTaskId/
+    currentCode[截断 2000 字符]/recentRunResult），服务端补充最近 3 条
+    求助记录（helpHistory）；MentorPanel 发送时携带——最小必要上下文，
+    不发整个项目
+  - **前端 TaskPanel**（IDE 左侧"任务"页签）：任务列表（进度/徽标）、
+    当前任务详情（说明/交付目标/验收条件/涉及知识点/测试文件）、
+    「运行任务测试并验收」按钮（只跑任务绑定的测试文件）→ 逐用例
+    反馈（✔/✘ + 失败消息）→ 验收结果卡（通过/需修正 + trustLevel +
+    warnings + 证据概念）→ 下一步任务引导按钮
+  - **runTestSuite 增强**：返回值增加逐文件 files 结果（P4.1 任务级
+    评估需要），不改变原有 totalXxx 字段（向后兼容）
+- [x] 验证：后端 pytest 126 个全过（任务评估 9：试点课程种子/任务级全绿
+  done+practice/越界忽略/失败 needs-fix/零断言不通过/无绑定测试/
+  依赖闸门/证据 application 维/事件含 trustLevel）；PG 4 全过；前端
+  vitest 211 个全过（1 失败为并行 Agent 未跟踪的 appearance 测试，
+  非本轮改动）；typecheck/build 全过；**真实端到端冒烟**通过（创建项目
+  → 3 任务+6 文件自动种子 → 测试文件含 describe/it → 全绿 done[practice] →
+  失败 needs-fix → 越界警告 → js.strings application 维 estimate=0.67 →
+  事件 trustLevel=practice）
 
 ### P1 验证汇总
 

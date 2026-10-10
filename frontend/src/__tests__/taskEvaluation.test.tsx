@@ -58,7 +58,7 @@ function planDetail(taskStatus = 'pending'): PlanDetail {
       reason: 'r',
       createdAt: 't',
     },
-    tasks: [{ taskId: 'task-scaffold', milestone: 1, title: '建立页面骨架', status: taskStatus }],
+    tasks: [{ taskId: 'task-scaffold', milestone: 1, title: '建立页面骨架', status: taskStatus, description: '', requiredConcepts: [], deliverable: '', testFiles: [], acceptanceCriteria: [], dependsOn: [] }],
   }
 }
 
@@ -79,10 +79,11 @@ beforeEach(() => {
 
 describe('详情页阶段验收', () => {
   it('点击测试验收：跑套件 → 提交 → 刷新任务状态为已完成', async () => {
-    mockedRunSuite.mockResolvedValue({ totalFiles: 1, totalPassed: 2, totalFailed: 0, errorFiles: 0 })
+    mockedRunSuite.mockResolvedValue({ totalFiles: 1, totalPassed: 2, totalFailed: 0, errorFiles: 0, files: [{ path: 'src/main.test.ts', status: 'passed', passed: 2, failed: 0, totalCases: 2 }] })
     mockedEvaluate.mockResolvedValue({
       taskId: 'task-scaffold', status: 'done', passed: true,
-      rubricVersion: 'suite-green-v1', evidenceConcepts: ['browser.dom'],
+      rubricVersion: 'task-scoped-v2', evidenceConcepts: ['browser.dom'],
+      warnings: [], trustLevel: 'practice',
     })
     // 第一次 getPlan 返回 pending；验收后第二次返回 done
     mockedPlan
@@ -94,14 +95,14 @@ describe('详情页阶段验收', () => {
     await user.click(await screen.findByRole('button', { name: '▶ 测试验收' }))
 
     await waitFor(() => expect(mockedEvaluate).toHaveBeenCalledWith('p1', 'task-scaffold', {
-      totalFiles: 1, totalPassed: 2, totalFailed: 0, errorFiles: 0, traceId: 'trace-1',
+      files: [{ path: 'src/main.test.ts', status: 'passed', passed: 2, failed: 0, totalCases: 2 }], traceId: 'trace-1',
     }))
     await waitFor(() => expect(screen.getByText('已完成')).toBeTruthy())
     expect(screen.queryByRole('button', { name: '▶ 测试验收' })).toBeNull() // done 后按钮消失
   })
 
   it('依赖未满足的 422 错误可见', async () => {
-    mockedRunSuite.mockResolvedValue({ totalFiles: 1, totalPassed: 1, totalFailed: 0, errorFiles: 0 })
+    mockedRunSuite.mockResolvedValue({ totalFiles: 1, totalPassed: 1, totalFailed: 0, errorFiles: 0, files: [{ path: 'src/main.test.ts', status: 'passed', passed: 1, failed: 0, totalCases: 1 }] })
     const { ApiError } = await import('../api/client')
     mockedEvaluate.mockRejectedValue(new ApiError(422, '前置任务尚未完成：task-scaffold'))
     renderDetail()

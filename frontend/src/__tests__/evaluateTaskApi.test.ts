@@ -26,7 +26,7 @@ describe('evaluateTask API 客户端', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const result = await evaluateTask('p1', 'task-scaffold', {
-      totalFiles: 1, totalPassed: 2, totalFailed: 0, errorFiles: 0, traceId: 't1',
+      files: [{ path: 'src/test.ts', status: 'passed', passed: 2, failed: 0, totalCases: 2 }], traceId: 't1',
     })
     expect(result.status).toBe('done')
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
@@ -40,7 +40,7 @@ describe('evaluateTask API 客户端', () => {
       taskId: 'x', status: 'vanished', passed: true, rubricVersion: 'v', evidenceConcepts: [],
     }))
     await expect(
-      evaluateTask('p1', 'x', { totalFiles: 0, totalPassed: 0, totalFailed: 0, errorFiles: 0 }),
+      evaluateTask('p1', 'x', { files: [] }),
     ).rejects.toThrow()
   })
 })

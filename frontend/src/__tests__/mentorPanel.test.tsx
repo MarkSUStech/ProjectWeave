@@ -70,7 +70,7 @@ describe('MentorPanel', () => {
     expect(screen.getByText('H1')).toBeTruthy()
     expect(screen.getByText('js.callbacks-events')).toBeTruthy()
     expect(screen.getByText(/920 tokens/)).toBeTruthy()
-    expect(mockedTurn).toHaveBeenCalledWith('p1', '预览为什么不更新？', { requestAnswerLevel: false })
+    expect(mockedTurn).toHaveBeenCalledWith('p1', '预览为什么不更新？', expect.objectContaining({ requestAnswerLevel: false }))
   })
 
   it('503 显示 AI 未配置状态', async () => {

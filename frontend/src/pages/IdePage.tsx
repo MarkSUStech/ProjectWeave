@@ -9,7 +9,7 @@ import { IdeTopBar } from '../components/ide/IdeTopBar'
 import { LeftPanel } from '../components/ide/LeftPanel'
 import { EditorPanel } from '../components/ide/EditorPanel'
 import { MentorPanel } from '../components/ide/MentorPanel'
-import { BottomPanel } from '../components/ide/BottomPanel'
+import { TerminalView, TestView, EventsView } from '../components/ide/BottomPanel'
 import { CanvasPlaceholder } from '../components/ide/CanvasPlaceholder'
 import { SceneRenderer } from '../viz/SceneRenderer'
 import { DEBUG_PANEL_SCENE, VARIABLES_STATE_SCENE } from '../viz/scenes'
@@ -26,11 +26,19 @@ import { trackClientEvent } from '../lib/eventTracker'
 import { fetchSuggestion } from '../api/tutor'
 import type { TutorDecision } from '../types/tutor'
 import { WorkspaceLayout } from '../components/ide/WorkspaceLayout'
+import { WorkspaceLayoutProvider, useWorkspaceLayout } from '../components/ide/WorkspaceLayoutContext'
+import { WorkspaceViewMenu } from '../components/ide/WorkspaceViewMenu'
 import { CommandPalette } from '../components/ide/CommandPalette'
 import { WorkspaceNoticeStrip } from '../components/ide/WorkspaceNoticeStrip'
+import { TaskPanel } from '../components/ide/TaskPanel'
 import type { PatchApplyResult } from '../lib/workspace/executor'
+import type { PlanTask } from '../types/plan'
+import type { TestFileResult } from '../types/runner'
+import { getPlan } from '../api/plans'
+import { readFile } from '../api/files'
 import { isRunnablePath } from '../lib/runner/runFile'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useUiReducedMotion } from '../hooks/useUiReducedMotion'
 import { formatDateTime } from '../lib/labels'
 
 /**
@@ -71,11 +79,12 @@ export default function IdePage() {
   if (!project) {
     return <Spinner label="正在加载工作台…" />
   }
-  return <IdeWorkspace project={project} />
+  return <WorkspaceLayoutProvider><IdeWorkspace key={project.id} project={project} /></WorkspaceLayoutProvider>
 }
 
 function IdeWorkspace({ project }: { project: Project }) {
-  const reduced = useReducedMotion()
+  const layout = useWorkspaceLayout()
+  const reduced = useUiReducedMotion()
   const mode = useIdeUiStore((state) => state.mode)
   const running = useRunStore((state) => state.running)
   const testsRunning = useTestStore((state) => state.running)
@@ -98,6 +107,55 @@ function IdeWorkspace({ project }: { project: Project }) {
   } = useProjectFiles(project.id)
 
   const fileHistory = useFileHistory(project.id, openPath, files?.find((file) => file.path === openPath)?.updatedAt)
+
+  // P4.1：加载学习计划任务（含 testFiles/acceptanceCriteria）
+  const [planTasks, setPlanTasks] = useState<PlanTask[] | null>(null)
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null)
+  const loadPlanTasks = useCallback(async () => {
+    try {
+      const detail = await getPlan(project.id)
+      setPlanTasks(detail.tasks)
+      // 默认选中第一个未完成任务
+      setCurrentTaskId((prev) => {
+        if (prev && detail.tasks.some((t) => t.taskId === prev)) return prev
+        const next = detail.tasks.find((t) => t.status !== 'done')
+        return next?.taskId ?? detail.tasks[0]?.taskId ?? null
+      })
+    } catch {
+      setPlanTasks([])
+    }
+  }, [project.id])
+  useEffect(() => {
+    void loadPlanTasks()
+  }, [loadPlanTasks])
+
+  // 任务测试运行：只跑任务绑定的测试文件（当前草稿优先），返回逐文件结果
+  const runTaskTests = useCallback(
+    async (testPaths: string[]): Promise<TestFileResult[]> => {
+      const results: TestFileResult[] = []
+      for (const path of testPaths) {
+        try {
+          const raw = openPath === path ? draftContent : (await readFile(project.id, path)).content
+          const { runTests } = await import('../lib/runner/runJavaScript')
+          const outcome = await runTests(raw, {
+            onEntry: (level, text) => useRunStore.getState().appendEntry(level, `[${path}] ${text}`),
+          })
+          results.push({
+            path,
+            status: outcome.result.ok && outcome.cases.every((c) => c.status === 'passed')
+              ? 'passed'
+              : outcome.result.ok ? 'failed' : 'error',
+            error: outcome.result.ok ? undefined : outcome.result.error,
+            cases: outcome.cases,
+          })
+        } catch (err) {
+          results.push({ path, status: 'error', error: err instanceof Error ? err.message : String(err), cases: [] })
+        }
+      }
+      return results
+    },
+    [project.id, openPath, draftContent],
+  )
 
   const handleRestoreSnapshot = useCallback(
     async (snapshotId: string) => {
@@ -144,6 +202,7 @@ function IdeWorkspace({ project }: { project: Project }) {
 
   const handleRunTests = useCallback(async () => {
     if (!files) return
+    layout?.reveal('tests')
     const summary = await runTestSuite(project.id, files, {
       currentDraft: openPath ? { path: openPath, content: draftContent } : undefined,
     })
@@ -154,7 +213,7 @@ function IdeWorkspace({ project }: { project: Project }) {
       { projectId: project.id },
     )
     void maybeFetchSuggestion(summary.totalFailed > 0 || summary.errorFiles > 0)
-  }, [project.id, files, openPath, draftContent, maybeFetchSuggestion])
+  }, [project.id, files, openPath, draftContent, maybeFetchSuggestion, layout])
 
   const handleRun = useCallback(() => {
     if (!openPath || !files) return
@@ -164,11 +223,12 @@ function IdeWorkspace({ project }: { project: Project }) {
       return
     }
     const startedAt = Date.now()
+    layout?.reveal('terminal')
     void runFileInTerminal(openPath, draftContent).then(({ status, traceId }) => {
       trackClientEvent('code-run', { path: openPath, status, durationMs: Date.now() - startedAt, traceId }, { projectId: project.id })
       void maybeFetchSuggestion(status !== 'ok')
     })
-  }, [project.id, openPath, draftContent, files, handleRunTests, maybeFetchSuggestion])
+  }, [project.id, openPath, draftContent, files, handleRunTests, maybeFetchSuggestion, layout])
 
   // §14.3 过期判定：草稿指纹与最近一次"单文件运行"的指纹不一致 → 画布标记过期。
   // （测试套件 trace 的 runPath 为 null，不参与单文件比对。）
@@ -238,18 +298,30 @@ function IdeWorkspace({ project }: { project: Project }) {
     },
     [openPath, dirty, setDraft],
   )
+  const handleOpenFile = (path: string) => { layout?.reveal('editor'); void openFile(path) }
+  const resourceProps = { project, files, openPath, onOpenFile: handleOpenFile, onCreateFile: createFile,
+    onRenameFile: renameFile, onDeleteFile: deleteFile, historyApi }
 
   return <div className="flex h-screen min-w-[960px] flex-col overflow-hidden bg-app">
-    <IdeTopBar project={project} commands={<CommandPalette files={files} onOpenFile={(path) => void openFile(path)}
+    <IdeTopBar project={project} commands={<><CommandPalette files={files} onOpenFile={handleOpenFile}
       onSave={() => void save()} onRun={handleRun} canSave={!!openPath && dirty && !saving}
-      canRun={!!openPath && isRunnablePath(openPath) && !running && !testsRunning} />} />
+      canRun={!!openPath && isRunnablePath(openPath) && !running && !testsRunning} /><WorkspaceViewMenu /></>} />
     <WorkspaceNoticeStrip projectId={project.id} onApplyPatch={applyPatch} />
     <div className="min-h-0 flex-1">
-      <WorkspaceLayout mode={mode}
-        left={<LeftPanel project={project} files={files} openPath={openPath} onOpenFile={(path) => void openFile(path)}
-          onCreateFile={createFile} onRenameFile={renameFile} onDeleteFile={deleteFile} historyApi={historyApi} />}
-        editor={editorWithSuggestion} canvas={canvas} mentor={<MentorPanel projectId={project.id} currentFile={openPath ? { path: openPath, content: draftContent } : undefined} onApplyPatch={applyPatch} />}
-        bottom={<BottomPanel onRunTests={() => void handleRunTests()} projectId={project.id} />} />
+      <WorkspaceLayout mode={mode} projectId={project.id} panels={{
+        files: <LeftPanel {...resourceProps} view="files" />,
+        tasks: planTasks !== null
+          ? <TaskPanel projectId={project.id} tasks={planTasks} currentTaskId={currentTaskId}
+              onSelectTask={setCurrentTaskId} onRunTaskTests={runTaskTests} />
+          : <LeftPanel {...resourceProps} view="tasks" />,
+        history: <LeftPanel {...resourceProps} view="history" />,
+        editor: editorWithSuggestion, canvas,
+        mentor: <MentorPanel projectId={project.id} currentFile={openPath ? { path: openPath, content: draftContent } : undefined}
+          onApplyPatch={applyPatch} currentTaskId={currentTaskId}
+          recentRunResult={runTrace ? { status: 'ok', summary: `最近运行 ${new Date(runTrace.at).toLocaleTimeString('zh-CN', { hour12: false })}` } : null} />,
+        terminal: <TerminalView />, tests: <TestView onRun={() => void handleRunTests()} />,
+        events: <EventsView projectId={project.id} />,
+      }} />
     </div>
     <footer className="flex h-7 shrink-0 items-center justify-between border-t border-edge-soft bg-panel px-4 text-[11px] text-ink-faint">
       <span>ProjectWeave · 浏览器工作区</span><span>{files?.length ?? '…'} 个文件 · {dirty ? '有未保存更改' : '自动保存已开启'}</span>
