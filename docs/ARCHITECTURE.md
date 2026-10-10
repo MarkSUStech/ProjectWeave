@@ -65,6 +65,7 @@
   - `debug_sandbox.py`：长生命周期调试容器（sleep infinity + `docker exec -i` 通道；文件经 stdin tar 注入；**调试专用 seccomp** = 上游默认 profile 仅放开 personality，普通沙箱零改动）；trixie 镜像 clang 19 + lldb-dap 19。
   - `service.py`：每会话一个串行线程独占全部 DAP 请求（防死锁）；快照抓取（threads→stackTrace→顶帧 scopes+variables，空栈重试）；看门狗（空闲 600s/硬 1800s）+ 启动清理 + DAP 死亡回收；**指令白名单**（不透传任意 LLDB 命令）。
   - `router.py`：`POST /debug-sessions`、`GET /{id}`（快照轮询）、`POST /{id}/commands`、`GET /{id}/variables`（懒加载）、`DELETE /{id}`。
+  - **指针关系图（P4.5b.1，D38）**：`pointer_graph.py`——服务端白名单 `evaluate &var`（evaluateName 正则 + 数量/超时上限）取地址，**指针值与地址精确相等才判已验证指向**；堆指针未解析、空指针显式状态，绝不虚构。快照携带 pauseSeq（暂停代次，每次 stopped 递增）——前端所有按 DAP 引用的缓存以（会话，代次）隔离。`GET /{id}/frames/{frameId}/variables` 返回指定帧变量（含 pauseSeq）。前端 `cpp-memory-graph` L1 组件（React Flow 稳定网格布局；已验证/未解析/空指针/数据不可用四态；运行中显示历史快照横幅）。
 - **领域模块** `app/domains/executions/`（P4.2b，远程执行沙箱，D32/D33）：
   - `models.py`：`execution_sessions` 表（状态机 queued→preparing→running→completed|failed|timed-out|cancelled、文件快照 JSONB、stdout/stderr/事件流/诊断/测试结果/阶段、沙箱引擎与镜像、排队/开始/结束时间）。
   - `sandbox/`：`SandboxManager` 协议（available/run/cleanup_stale）+ `DockerSandboxManager`——一次性容器：`--network none`、`--read-only` + tmpfs（属主 10001；**工作区执行策略语言专属 D34**：Python `noexec`，C++ `exec` 由服务端 `SandboxSpec.exec_workspace` 声明，客户端不可控）、非 root、cap-drop ALL、no-new-privileges、memory/cpu/pids 限额、stdin gzip-tar 注入、`pw.sandbox` 标签追踪 + 启动清理 + 用后即毁；gVisor/微 VM 未来同协议接入。
@@ -119,6 +120,7 @@
 | POST | /api/v1/debug-sessions/{id}/commands | 结构化调试指令（白名单：continue/pause/next/stepIn/stepOut/stop/setBreakpoints） |
 | GET | /api/v1/debug-sessions/{id}/variables?variablesReference= | 变量懒加载（复杂对象展开） |
 | DELETE | /api/v1/debug-sessions/{id} | 停止调试并回收容器（幂等） |
+| GET | /api/v1/debug-sessions/{id}/frames/{frameId}/variables | 指定栈帧的作用域变量与指针图（含 pauseSeq，缓存按代次隔离） |
 | （前端上报） | workspace-action 事件 | 工作台动作执行结果审计（executed/rejected/needs-confirmation/confirmed/undone） |
 
 OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。

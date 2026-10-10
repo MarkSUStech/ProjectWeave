@@ -12,7 +12,7 @@ import { MentorPanel } from '../components/ide/MentorPanel'
 import { TerminalView, TestView, EventsView } from '../components/ide/BottomPanel'
 import { CanvasPlaceholder } from '../components/ide/CanvasPlaceholder'
 import { SceneRenderer } from '../viz/SceneRenderer'
-import { DEBUG_PANEL_SCENE, DEBUG_SNAPSHOT_SCENE, VARIABLES_STATE_SCENE } from '../viz/scenes'
+import { DEBUG_PANEL_SCENE, MEMORY_GRAPH_SCENE, VARIABLES_STATE_SCENE } from '../viz/scenes'
 import { fingerprint } from '../lib/fingerprint'
 import { useIdeUiStore } from '../stores/ideUiStore'
 import { useRunStore } from '../stores/runStore'
@@ -457,7 +457,7 @@ function IdeWorkspace({ project }: { project: Project }) {
   </div>
   const canvas = mode === 'architecture' ? <CanvasPlaceholder kind="architecture" /> :
     <SceneRenderer
-      scene={debugSnapshot && debugSnapshot.status !== 'terminated' ? DEBUG_SNAPSHOT_SCENE : mode === 'debugging' ? DEBUG_PANEL_SCENE : VARIABLES_STATE_SCENE}
+      scene={debugSnapshot && debugSnapshot.status !== 'terminated' ? MEMORY_GRAPH_SCENE : mode === 'debugging' ? DEBUG_PANEL_SCENE : VARIABLES_STATE_SCENE}
       trace={runTrace}
       stale={canvasStale || debugStale}
     />

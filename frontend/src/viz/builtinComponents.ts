@@ -6,6 +6,7 @@ import { getComponent, registerComponent } from './registry'
 import { ConsoleTimelineView } from './components/consoleTimeline'
 import { VariablesStateView } from './components/variablesState'
 import { DebugSnapshotView } from './components/debugSnapshot'
+import { MemoryGraphView } from './components/memoryGraph'
 
 export function ensureBuiltinComponents(): void {
   if (getComponent('console-timeline')) return
@@ -35,5 +36,14 @@ export function ensureBuiltinComponents(): void {
     renderCapabilities: ['真实暂停位置', '调用栈', '局部变量与变化'],
     accessibilityDescription: '来自真实 LLDB 调试会话的执行位置、调用栈与变量状态，可点击选中栈帧',
     View: DebugSnapshotView,
+  })
+  registerComponent({
+    componentId: 'cpp-memory-graph',
+    version: 'v1',
+    supportedConcepts: ['cpp.pointers', 'cpp.references', 'cpp.objects'],
+    dataSources: ['debug:latest'],
+    renderCapabilities: ['变量与真实地址', '已验证指向关系', '空指针/未解析状态', '值变化标记'],
+    accessibilityDescription: '基于真实 LLDB 地址匹配的变量与指针关系图，仅已验证关系绘制箭头',
+    View: MemoryGraphView,
   })
 }

@@ -10,6 +10,7 @@ import { create } from 'zustand'
 import {
   expandDebugVariables,
   getDebugSnapshot,
+  getFrameVariables,
   sendDebugCommand,
   startDebugSession,
   stopDebugSession,
@@ -17,6 +18,7 @@ import {
   type DebugCommand,
   type DebugSnapshot,
   type DebugVariable,
+  type FrameVariables,
 } from '../api/debug'
 import { ApiError } from '../api/client'
 
@@ -31,8 +33,14 @@ interface DebugStoreState {
   starting: boolean
   commanding: boolean
   error: string | null
-  /** 懒加载变量缓存：variablesReference → 子变量。 */
+  /** 懒加载变量缓存：variablesReference → 子变量（按暂停代次失效，D38）。 */
   expandedVars: Record<number, DebugVariable[]>
+  /** 帧变量缓存：frameId → 该帧作用域数据（含 pauseSeq；代次变化即失效）。 */
+  frameVars: Record<number, FrameVariables>
+  /** 用户选中的栈帧（null = 顶帧快照）。 */
+  selectedFrameId: number | null
+  loadFrameVars: (frameId: number) => Promise<void>
+  selectFrame: (frameId: number | null) => void
   toggleBreakpoint: (path: string, line: number) => void
   hasBreakpoints: () => boolean
   toBreakpointInputs: () => DebugBreakpointInput[]
@@ -65,6 +73,8 @@ export const useDebugStore = create<DebugStoreState>((set, get) => ({
   commanding: false,
   error: null,
   expandedVars: {},
+  frameVars: {},
+  selectedFrameId: null,
 
   toggleBreakpoint: (path, line) => {
     set((state) => {
@@ -100,7 +110,7 @@ export const useDebugStore = create<DebugStoreState>((set, get) => ({
       set({ error: '请先在行号区域点击设置至少一个断点（C++ 调试需要断点或选择入口暂停）' })
       return
     }
-    set({ starting: true, error: null, snapshot: null, expandedVars: {} })
+    set({ starting: true, error: null, snapshot: null, expandedVars: {}, frameVars: {}, selectedFrameId: null })
     try {
       const created = await startDebugSession({
         entryPoint: input.entryPoint,
@@ -166,6 +176,27 @@ export const useDebugStore = create<DebugStoreState>((set, get) => ({
     }
   },
 
+  loadFrameVars: async (frameId) => {
+    const { snapshot, frameVars } = get()
+    if (!snapshot || snapshot.status !== 'paused') return
+    const cached = frameVars[frameId]
+    if (cached && cached.pauseSeq === snapshot.pauseSeq) return
+    try {
+      const result = await getFrameVariables(snapshot.id, frameId)
+      // 竞态防护：返回代次已过期则丢弃
+      const now = get().snapshot
+      if (!now || now.pauseSeq !== result.pauseSeq || now.id !== snapshot.id) return
+      set({ frameVars: { ...get().frameVars, [frameId]: result } })
+    } catch {
+      // 帧查询失败静默（面板维持顶帧数据）
+    }
+  },
+
+  selectFrame: (frameId) => {
+    set({ selectedFrameId: frameId })
+    if (frameId !== null) void get().loadFrameVars(frameId)
+  },
+
   dismissError: () => set({ error: null }),
 }))
 
@@ -178,8 +209,17 @@ async function pollOnce(id: string, set: (partial: Partial<DebugStoreState>) => 
       stopPolling()
       return
     }
-    set({ snapshot: snap })
-    if (TERMINAL.has(snap.status)) stopPolling()
+    // 暂停代次变化：DAP variablesReference 可能失效/重分配——旧缓存全部作废（D38）
+    const generationChanged = current.pauseSeq !== snap.pauseSeq
+    set({
+      snapshot: snap,
+      ...(generationChanged ? { expandedVars: {}, frameVars: {} } : {}),
+    })
+    if (TERMINAL.has(snap.status)) {
+      stopPolling()
+      // 会话结束：释放全部按引用/代次的缓存（验收 I）
+      set({ expandedVars: {}, frameVars: {}, selectedFrameId: null })
+    }
   } catch {
     // 网络闪断容忍：下轮重试
   }

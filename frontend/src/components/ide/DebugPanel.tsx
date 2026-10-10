@@ -57,6 +57,14 @@ export function DebugPanel({ onOpenFile }: { onOpenFile?: (path: string) => void
   const snapshot = useDebugStore((s) => s.snapshot)
   const error = useDebugStore((s) => s.error)
   const dismissError = useDebugStore((s) => s.dismissError)
+  const frameVars = useDebugStore((s) => s.frameVars)
+  const selectedFrameId = useDebugStore((s) => s.selectedFrameId)
+  const selectFrame = useDebugStore((s) => s.selectFrame)
+
+  // 选中帧的作用域数据（未加载时回落顶帧快照，并触发按帧重载）
+  const activeScopes = selectedFrameId !== null && frameVars[selectedFrameId]
+    ? frameVars[selectedFrameId].scopes
+    : snapshot?.scopes ?? []
 
   if (!snapshot && !error) {
     return (
@@ -118,8 +126,13 @@ export function DebugPanel({ onOpenFile }: { onOpenFile?: (path: string) => void
                 <li key={frame.id}>
                   <button
                     type="button"
-                    onClick={() => frame.file && onOpenFile?.(frame.file)}
-                    className={`flex w-full items-baseline gap-2 rounded px-1.5 py-0.5 text-left font-mono text-[11px] hover:bg-panel-2 ${i === 0 ? 'text-warn' : 'text-ink-dim'}`}
+                    onClick={() => {
+                      selectFrame(frame.id)
+                      if (frame.file) onOpenFile?.(frame.file)
+                    }}
+                    className={`flex w-full items-baseline gap-2 rounded px-1.5 py-0.5 text-left font-mono text-[11px] hover:bg-panel-2 ${
+                      (selectedFrameId ?? snapshot?.stackFrames[0]?.id) === frame.id ? 'bg-accent-soft text-ink' : i === 0 ? 'text-warn' : 'text-ink-dim'
+                    }`}
                   >
                     <span className="w-4 shrink-0 text-right text-ink-faint">{i === 0 ? '▶' : i}</span>
                     <span className="truncate">{frame.name}</span>
@@ -132,10 +145,12 @@ export function DebugPanel({ onOpenFile }: { onOpenFile?: (path: string) => void
         )}
 
         {/* 作用域与变量（顶帧） */}
-        {snapshot && snapshot.scopes.length > 0 && (
+        {snapshot && activeScopes.length > 0 && (
           <section className="mb-3">
-            <div className="mb-1 text-[11px] font-medium text-ink-faint">变量（当前栈帧）</div>
-            {snapshot.scopes.map((scope) => (
+            <div className="mb-1 text-[11px] font-medium text-ink-faint">
+              变量（{selectedFrameId !== null ? `帧 #${selectedFrameId}` : '当前栈帧'}）
+            </div>
+            {activeScopes.map((scope) => (
               <div key={scope.name} className="mb-1.5">
                 <div className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint">{scope.name}</div>
                 {scope.variables.length === 0 ? (

@@ -54,6 +54,7 @@ class VariableRead(APIModel):
     name: str
     value: str = ""
     type: str | None = None
+    evaluate_name: str | None = None
     variables_reference: int = 0
 
 
@@ -91,6 +92,11 @@ class DebugSnapshotRead(APIModel):
     debugger_profile: str | None = None
     location: LocationRead | None = None
     stop_reason: str | None = None
+    # 暂停代次：所有按 DAP 引用缓存的数据以此隔离（旧代次引用不得复用）
+    pause_seq: int = 0
+    thread_id: int | None = None
+    # 指针关系图（真实 evaluate 地址匹配；未解析/空指针如实标注）
+    pointer_graph: dict | None = None
     threads: list[ThreadRead] = Field(default_factory=list)
     stack_frames: list[StackFrameRead] = Field(default_factory=list)
     scopes: list[ScopeRead] = Field(default_factory=list)
@@ -125,3 +131,12 @@ class DebugVariablesQuery(APIModel):
 
     frame_id: int | None = None
     variables_reference: int
+
+
+class FrameVariablesRead(APIModel):
+    """按栈帧取作用域变量（当前暂停代次内有效；携带 pauseSeq 供缓存隔离）。"""
+
+    frame_id: int
+    pause_seq: int
+    scopes: list[ScopeRead] = Field(default_factory=list)
+    pointer_graph: dict | None = None

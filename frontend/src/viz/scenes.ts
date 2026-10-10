@@ -75,3 +75,16 @@ export const DEBUG_SNAPSHOT_SCENE: TeachingScene = {
   ],
   allowedInteractions: ['点击选中调用栈帧'],
 }
+
+/** C++ 内存与指针关系图场景（P4.5b.1，D38）：真实 evaluate 地址匹配，非推测。 */
+export const MEMORY_GRAPH_SCENE: TeachingScene = {
+  sceneId: 'builtin:cpp-memory-graph',
+  templateId: 'runtime.cpp-memory-graph.v1',
+  objectiveId: null,
+  sourceType: 'runtime',
+  dataBinding: { ref: 'debug:latest' },
+  components: [
+    { id: 'memgraph', type: 'cpp-memory-graph', config: {} },
+  ],
+  allowedInteractions: ['拖动节点', '缩放画布'],
+}

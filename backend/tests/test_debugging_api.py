@@ -234,3 +234,79 @@ def test_command_after_terminated_rejected(client: TestClient, debug_env):
     resp = client.post(f"/api/v1/debug-sessions/{sid}/commands", json={"command": "next"})
     assert resp.status_code == 422
     assert "已结束" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------- P4.5b.1：指针图 / 代次 / 帧变量
+
+
+@pytest.fixture()
+def ptr_env(client, db_session, monkeypatch):
+    """带指针数据的假 DAP：x(0x100) / p→x / np=null / hp=堆(未解析)。"""
+    provider = FakeDebugProvider()
+    service.set_debug_provider(provider)
+    factory = sessionmaker(bind=db_session.get_bind(), autoflush=False, expire_on_commit=False)
+    service.set_session_factory(factory)
+    monkeypatch.setenv("FAKE_DAP_SCRIPT", json.dumps({
+        "stopLine": 9,
+        "entry": "src/main.cpp",
+        "typedLocals": [
+            {"name": "x", "value": "10", "type": "int", "evaluateName": "x"},
+            {"name": "p", "value": "0x0000000000000100", "type": "int *", "evaluateName": "p"},
+            {"name": "np", "value": "0x0000000000000000", "type": "int *", "evaluateName": "np"},
+            {"name": "hp", "value": "0x000055555556b2b0", "type": "int *", "evaluateName": "hp"},
+        ],
+        "addresses": {"&x": "0x0000000000000100"},
+        "recursionFrames": [
+            {"id": 0, "name": "fib(int)", "file": "src/main.cpp", "line": 5},
+            {"id": 1, "name": "fib(int)", "file": "src/main.cpp", "line": 5},
+            {"id": 2, "name": "main", "file": "src/main.cpp", "line": 8},
+        ],
+        "frame1Locals": [
+            {"name": "x", "value": "999", "type": "int", "evaluateName": "x"},  # 帧间同名变量
+        ],
+    }))
+    yield provider
+    service.set_debug_provider(DockerDebugSandbox())
+    service.set_session_factory(SessionLocal)
+
+
+def test_snapshot_carries_pointer_graph_and_pause_seq(client: TestClient, ptr_env):
+    sid = _create(client).json()["id"]
+    snap = _wait(client, sid, {"paused"})
+    # 指针图：唯一已验证边 p→x（地址精确匹配）；np 空指针；hp 未解析
+    graph = snap["pointerGraph"]
+    assert graph is not None
+    assert graph["verifiedEdges"] == [{"from": "p", "to": "x", "address": "0x0000000000000100"}]
+    assert graph["nullPointers"] == [{"name": "np", "value": "0x0000000000000000"}]
+    assert graph["unresolvedPointers"] == [{"name": "hp", "value": "0x000055555556b2b0"}]
+    assert graph["addresses"]["x"] == "0x0000000000000100"
+    # 真实变量值（A）
+    locals_scope = next(s for s in snap["scopes"] if s["name"] == "Locals")
+    assert {v["name"]: v["value"] for v in locals_scope["variables"]}["x"] == "10"
+    assert snap["pauseSeq"] == 1
+
+
+def test_step_advances_pause_seq(client: TestClient, ptr_env):
+    sid = _create(client).json()["id"]
+    _wait(client, sid, {"paused"})
+    snap = _cmd(client, sid, "next")
+    assert snap["pauseSeq"] == 2  # 新暂停代次（E：旧引用缓存必须失效）
+
+
+def test_frame_variables_endpoint_and_same_name_isolation(client: TestClient, ptr_env):
+    sid = _create(client).json()["id"]
+    snap = _wait(client, sid, {"paused"})
+    _cmd(client, sid, "continue")  # 进递归帧
+    snap = _wait(client, sid, {"paused"})
+    frames = snap["stackFrames"]
+    assert len(frames) >= 2 and "fib" in frames[1]["name"]
+
+    resp = client.get(f"/api/v1/debug-sessions/{sid}/frames/{frames[1]['id']}/variables")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["pauseSeq"] == snap["pauseSeq"]
+    # 帧间同名变量不混淆（D）：帧 1 的 x = 999（不同于顶帧 10）
+    locals_scope = next(s for s in body["scopes"] if s["name"] == "Locals")
+    values = {v["name"]: v["value"] for v in locals_scope["variables"]}
+    assert values["x"] == "999"
+    _cmd(client, sid, "stop")

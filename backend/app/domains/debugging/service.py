@@ -30,6 +30,7 @@ from app.domains.debugging.debug_sandbox import (
     build_files_archive,
 )
 from app.domains.debugging.models import DEBUG_STATUSES, DebugSession
+from app.domains.debugging.pointer_graph import build_pointer_graph
 from app.domains.debugging.schemas import BreakpointSpec, DebugSessionCreate
 from app.domains.events.service import append_event, server_event_id
 from app.domains.executions.languages.cpp_driver import select_run_sources
@@ -106,6 +107,8 @@ class _Handle:
         self.dap: DapClient | None = None
         self.dap_log: list[dict] = []
         self.primary_thread_id: int | None = None
+        # 暂停代次：每次 stopped 递增；所有按 DAP 引用缓存的数据以此隔离
+        self.pause_seq = 0
         self.last_activity = time.monotonic()
         self.hard_deadline = time.monotonic() + _hard_timeout_s()
         # 看门狗请求的超时原因（idle/hard），主循环 stop 分支据此区分 end_reason
@@ -445,8 +448,9 @@ def _fetch_pause_snapshot(handle: _Handle, stopped_thread_id: int | None = None)
             "frameName": top["name"],
         }
         snapshot["location"] = location
+        top_frame_id = top["id"]
         try:
-            scopes_body = _dap_call(handle, "scopes", {"frameId": top["id"]}, timeout=10)
+            scopes_body = _dap_call(handle, "scopes", {"frameId": top_frame_id}, timeout=10)
             scopes = []
             for scope in scopes_body.get("scopes", []):
                 entry = {
@@ -464,6 +468,7 @@ def _fetch_pause_snapshot(handle: _Handle, stopped_thread_id: int | None = None)
                                 "name": v.get("name", ""),
                                 "value": str(v.get("value", ""))[:MAX_VALUE_CHARS],
                                 "type": v.get("type"),
+                                "evaluateName": v.get("evaluateName"),
                                 "variablesReference": v.get("variablesReference", 0),
                             }
                             for v in var_body.get("variables", [])[:MAX_VARIABLES_PER_SCOPE]
@@ -474,7 +479,57 @@ def _fetch_pause_snapshot(handle: _Handle, stopped_thread_id: int | None = None)
             snapshot["scopes"] = scopes
         except DapError:
             snapshot["scopes"] = []
+
+        # 指针关系图（P4.5b.1）：Locals 顶层变量 + 白名单 evaluate 地址匹配（真实数据）
+        try:
+            locals_vars = next(
+                (s["variables"] for s in snapshot.get("scopes", []) if s["name"] == "Locals"),
+                [],
+            )
+            snapshot["pointerGraph"] = build_pointer_graph(handle.dap, top_frame_id, locals_vars)
+        except Exception:
+            snapshot["pointerGraph"] = None
     return snapshot
+
+
+def _fetch_frame_variables(handle: _Handle, frame_id: int) -> dict:
+    """按 DAP frameId 取该帧作用域+变量+指针图（当前暂停代次内有效）。"""
+    scopes_body = _dap_call(handle, "scopes", {"frameId": frame_id}, timeout=10)
+    scopes = []
+    for scope in scopes_body.get("scopes", []):
+        entry = {
+            "name": scope.get("name", ""),
+            "variablesReference": scope.get("variablesReference", 0),
+            "expensive": bool(scope.get("expensive", False)),
+            "variables": [],
+        }
+        if not entry["expensive"] and "egisters" not in entry["name"]:
+            try:
+                var_body = _dap_call(handle, "variables", {"variablesReference": entry["variablesReference"]}, timeout=10)
+                entry["variables"] = [
+                    {
+                        "name": v.get("name", ""),
+                        "value": str(v.get("value", ""))[:MAX_VALUE_CHARS],
+                        "type": v.get("type"),
+                        "evaluateName": v.get("evaluateName"),
+                        "variablesReference": v.get("variablesReference", 0),
+                    }
+                    for v in var_body.get("variables", [])[:MAX_VARIABLES_PER_SCOPE]
+                ]
+            except DapError:
+                pass
+        scopes.append(entry)
+    locals_vars = next((s["variables"] for s in scopes if s["name"] == "Locals"), [])
+    try:
+        pointer_graph = build_pointer_graph(handle.dap, frame_id, locals_vars)
+    except Exception:
+        pointer_graph = None
+    return {
+        "frameId": frame_id,
+        "pauseSeq": handle.pause_seq,
+        "scopes": scopes,
+        "pointerGraph": pointer_graph,
+    }
 
 
 def _persist_snapshot(handle: _Handle, session_id: uuid.UUID, status: str, reason: str | None, snapshot: dict) -> None:
@@ -486,6 +541,9 @@ def _persist_snapshot(handle: _Handle, session_id: uuid.UUID, status: str, reaso
         "scopes": snapshot.get("scopes", []),
         "current_location": snapshot.get("location"),
         "dap_log": list(handle.dap_log),
+        "pause_seq": snapshot.get("pauseSeq", handle.pause_seq),
+        "snapshot_thread_id": snapshot.get("threadId"),
+        "pointer_graph": snapshot.get("pointerGraph"),
     }
     if status == "paused":
         fields["paused_at"] = utcnow()
@@ -659,6 +717,15 @@ def _execute_command(handle: _Handle, session_id: uuid.UUID, item: _Command) -> 
         _persist(session_id, verified_breakpoints=verified)
         return {"breakpoints": verified}
 
+    if command == "frameVariables":
+        # 帧变量查询（白名单）：用户切换栈帧时按 frameId 重载对应变量；
+        # 返回携带 pauseSeq——旧代次缓存不得复用于新暂停（P4.5b.1）。
+        frame_id = payload.get("frameId")
+        if not isinstance(frame_id, int):
+            raise DapError("frameId 必须是整数")
+        result = _fetch_frame_variables(handle, frame_id)
+        return result
+
     if command == "variables":
         body = _dap_call(handle, "variables", {
             "variablesReference": payload.get("variablesReference", 0),
@@ -716,6 +783,9 @@ def _drain_events(handle: _Handle, session_id: uuid.UUID) -> None:
                 snapshot = _fetch_pause_snapshot(handle, body.get("threadId"))
             except DapError as exc:
                 handle.log_dap("error", f"快照抓取失败：{exc}")
+            handle.pause_seq += 1
+            snapshot["pauseSeq"] = handle.pause_seq
+            snapshot["threadId"] = body.get("threadId", snapshot.get("threadId"))
             _persist_snapshot(handle, session_id, "paused", body.get("reason", "unknown"), snapshot)
             handle.stopped_signal.set()
         elif name == "continued":

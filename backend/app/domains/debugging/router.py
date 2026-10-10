@@ -16,6 +16,7 @@ from app.core.db import get_db
 from app.domains.debugging import service
 from app.domains.debugging.schemas import (
     DebugCommandInput,
+    FrameVariablesRead,
     DebugSessionCreated,
     DebugSessionCreate,
     DebugSnapshotRead,
@@ -92,6 +93,25 @@ def expand_variables(
         raise HTTPException(status_code=404, detail="调试会话不存在") from None
 
 
+@router.get("/{session_id}/frames/{frame_id}/variables", response_model=FrameVariablesRead)
+def frame_variables(
+    session_id: str,
+    frame_id: int,
+    db: Session = Depends(get_db),
+) -> FrameVariablesRead:
+    """按栈帧取作用域变量（白名单；携带 pauseSeq——旧代次缓存不得复用）。"""
+    session_uuid = _parse_id(session_id)
+    try:
+        result = service.send_command(
+            db, session_uuid, "frameVariables", {"frameId": frame_id}
+        )
+    except service.DebugValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except service.DebugNotFoundError:
+        raise HTTPException(status_code=404, detail="调试会话不存在") from None
+    return FrameVariablesRead.model_validate(result)
+
+
 @router.delete("/{session_id}", status_code=200, response_model=DebugSnapshotRead)
 def stop_session(session_id: str, db: Session = Depends(get_db)) -> DebugSnapshotRead:
     session_uuid = _parse_id(session_id)
@@ -114,6 +134,9 @@ def _to_read(row) -> DebugSnapshotRead:
         debuggerProfile=row.debugger_profile,
         location=row.current_location or None,
         stopReason=row.stop_reason,
+        pauseSeq=row.pause_seq or 0,
+        threadId=row.snapshot_thread_id,
+        pointerGraph=row.pointer_graph,
         threads=row.threads or [],
         stackFrames=row.stack_frames or [],
         scopes=row.scopes or [],

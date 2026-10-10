@@ -14,6 +14,7 @@ export const variableSchema = z.object({
   name: z.string(),
   value: z.string().default(''),
   type: z.string().nullable().default(null),
+  evaluateName: z.string().nullable().default(null),
   variablesReference: z.number().int().default(0),
 })
 
@@ -61,6 +62,17 @@ export const diagnosticSchema = z.object({
   source: z.string().default('build'),
 })
 
+/** 指针关系图：全部来自真实 evaluate 地址匹配（D38）；未解析/空指针如实标注。 */
+export const pointerGraphSchema = z.object({
+  addresses: z.record(z.string(), z.string().nullable()),
+  verifiedEdges: z.array(z.object({
+    from: z.string(), to: z.string(), address: z.string(),
+  })).default([]),
+  unresolvedPointers: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
+  nullPointers: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
+  evalLimitReached: z.boolean().default(false),
+})
+
 export const debugSnapshotSchema = z.object({
   id: z.string().uuid(),
   language: z.string(),
@@ -72,6 +84,9 @@ export const debugSnapshotSchema = z.object({
   debuggerProfile: z.string().nullable().default(null),
   location: locationSchema.nullable().default(null),
   stopReason: z.string().nullable().default(null),
+  pauseSeq: z.number().int().default(0),
+  threadId: z.number().int().nullable().default(null),
+  pointerGraph: pointerGraphSchema.nullable().default(null),
   threads: z.array(threadSchema).default([]),
   stackFrames: z.array(stackFrameSchema).default([]),
   scopes: z.array(scopeSchema).default([]),
@@ -140,3 +155,22 @@ export async function stopDebugSession(id: string): Promise<DebugSnapshot> {
   const data = await api.delete<unknown>(`/debug-sessions/${id}`)
   return debugSnapshotSchema.parse(data)
 }
+
+/** 按栈帧取作用域变量（白名单端点；返回 pauseSeq——旧代次缓存不得复用）。 */
+export async function getFrameVariables(
+  id: string,
+  frameId: number,
+): Promise<FrameVariables> {
+  const data = await api.get<unknown>(`/debug-sessions/${id}/frames/${frameId}/variables`)
+  return frameVariablesSchema.parse(data)
+}
+
+export const frameVariablesSchema = z.object({
+  frameId: z.number().int(),
+  pauseSeq: z.number().int(),
+  scopes: z.array(scopeSchema).default([]),
+  pointerGraph: pointerGraphSchema.nullable().default(null),
+})
+
+export type FrameVariables = z.infer<typeof frameVariablesSchema>
+export type PointerGraph = z.infer<typeof pointerGraphSchema>

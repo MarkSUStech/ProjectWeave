@@ -61,7 +61,7 @@ def main():
     current_line = stop_line
     current_frames = [[{"id": 0, "name": "main", "file": entry, "line": stop_line}]]
     bp_lines = set(script.get("breakpointLines", [stop_line]))
-    state = {"in_recursion": False}
+    state = {"in_recursion": False, "generation": 0}
 
     def send_later(delay, payload):
         def _send():
@@ -107,15 +107,32 @@ def main():
                 })
             write_message(out, response(request, {"stackFrames": frames, "totalFrames": len(frames)}))
         elif command == "scopes":
+            gen = state["generation"]
+            base = 1000 + gen * 100 + (10 if args.get("frameId", 0) >= 1 else 0)
             write_message(out, response(request, {"scopes": [
-                {"name": "Locals", "variablesReference": 1000, "expensive": False},
+                {"name": "Locals", "variablesReference": base, "expensive": False},
                 {"name": "Globals", "variablesReference": 2000, "expensive": True},
             ]}))
         elif command == "variables":
             ref = args.get("variablesReference")
-            if ref == 1000:
-                variables = [{"name": k, "value": v, "type": "int", "variablesReference": 0}
-                             for k, v in locals_map.items()]
+            gen = state["generation"]
+            locals_ref = 1000 + gen * 100
+            frame1_ref = locals_ref + 10
+            if ref == locals_ref or ref == frame1_ref:
+                # 帧感知 locals：frame1（递归帧）可用 frame1Locals 区分同名变量
+                frame1_locals = script.get("frame1Locals")
+                source = frame1_locals if (ref == frame1_ref and frame1_locals) else script.get("typedLocals")
+                if source is not None:
+                    variables = [
+                        {"name": v["name"], "value": v["value"], "type": v.get("type"),
+                         "evaluateName": v.get("evaluateName", v["name"]),
+                         "variablesReference": v.get("variablesReference", 0)}
+                        for v in source
+                    ]
+                else:
+                    variables = [{"name": k, "value": v, "type": "int",
+                                  "evaluateName": k, "variablesReference": 0}
+                                 for k, v in locals_map.items()]
             elif ref == 2000:
                 variables = [{"name": "globalVar", "value": "1", "variablesReference": 0}]
             elif ref == 3000:
@@ -123,9 +140,22 @@ def main():
             else:
                 variables = []
             write_message(out, response(request, {"variables": variables}))
+        elif command == "evaluate":
+            expr = args.get("expression", "")
+            addresses = script.get("addresses", {})
+            if expr in addresses:
+                write_message(out, response(request, {
+                    "result": f"(void *) $0 = {addresses[expr]}",
+                    "type": "void *", "variablesReference": 0,
+                }))
+            elif expr.startswith("&") and script.get("evaluateFailFor", []) and expr in script["evaluateFailFor"]:
+                write_message(out, response(request, success=False, message="unsupported expression"))
+            else:
+                write_message(out, response(request, success=False, message=f"not allowed: {expr}"))
         elif command in ("next", "stepIn", "stepOut"):
             current_line += 1
             current_frames[-1] = [{"id": 0, "name": "main", "file": entry, "line": current_line}]
+            state["generation"] += 1
             write_message(out, response(request))
             send_later(0.05, event("stopped", {"reason": "step", "threadId": 1, "allThreadsStopped": True}))
         elif command == "continue":
@@ -134,6 +164,7 @@ def main():
             if state["in_recursion"] is False and recursion_frames:
                 state["in_recursion"] = True
                 current_frames.append(recursion_frames)
+                state["generation"] += 1
                 send_later(0.05, event("stopped", {"reason": "breakpoint", "threadId": 1, "allThreadsStopped": True}))
             else:
                 send_later(0.1, event("exited", {"exitCode": 0}))

@@ -62,6 +62,13 @@ class DebugSession(Base):
     # 最近一次暂停/停止时的快照（真实 DAP 数据，非推测）
     current_location: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     stop_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # 暂停代次：每次 stopped 事件递增——所有按引用缓存的数据（变量/图）以此隔离，
+    # 旧代次的 variablesReference 不得复用于新暂停（P4.5b.1 数据一致性）
+    pause_seq: Mapped[int] = mapped_column(default=0)
+    # 快照所属线程 id（帧/变量查询的上下文）
+    snapshot_thread_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 指针关系图（真实 evaluate 地址匹配验证；未解析/空指针如实标注，非推测）
+    pointer_graph: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     threads: Mapped[list] = mapped_column(JSONType, default=list)
     stack_frames: Mapped[list] = mapped_column(JSONType, default=list)
     scopes: Mapped[list] = mapped_column(JSONType, default=list)

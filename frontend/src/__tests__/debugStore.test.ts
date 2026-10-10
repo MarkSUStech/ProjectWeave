@@ -8,6 +8,7 @@ vi.mock('../api/debug', () => ({
   sendDebugCommand: vi.fn(),
   stopDebugSession: vi.fn(),
   expandDebugVariables: vi.fn(),
+  getFrameVariables: vi.fn(),
 }))
 
 import { useDebugStore } from '../stores/debugStore'
@@ -17,6 +18,7 @@ import {
   startDebugSession,
   stopDebugSession,
   expandDebugVariables,
+  getFrameVariables,
 } from '../api/debug'
 
 const mockedStart = vi.mocked(startDebugSession)
@@ -24,6 +26,7 @@ const mockedGet = vi.mocked(getDebugSnapshot)
 const mockedCommand = vi.mocked(sendDebugCommand)
 const mockedStop = vi.mocked(stopDebugSession)
 const mockedExpand = vi.mocked(expandDebugVariables)
+const mockedFrameVars = vi.mocked(getFrameVariables)
 
 function snapshot(overrides: Record<string, unknown> = {}) {
   return {
@@ -48,7 +51,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   useDebugStore.setState({
     breakpoints: {}, snapshot: null, starting: false, commanding: false,
-    error: null, expandedVars: {},
+    error: null, expandedVars: {}, frameVars: {}, selectedFrameId: null,
   })
 })
 
@@ -129,9 +132,45 @@ describe('会话与轮询', () => {
     expect(useDebugStore.getState().snapshot?.endReason).toBe('cancelled')
   })
 
+  it('轮询到新代次清缓存、终态释放全部（I）', async () => {
+    useDebugStore.getState().toggleBreakpoint('src/main.cpp', 5)
+    mockedStart.mockResolvedValue({ id: snapshot().id, status: 'creating' })
+    mockedGet.mockResolvedValueOnce(snapshot({ pauseSeq: 1 }) as never)
+    await useDebugStore.getState().start({ entryPoint: 'src/main.cpp', files: {} })
+
+    // 模拟已有缓存（代次 1）
+    useDebugStore.setState({ expandedVars: { 3000: [] }, frameVars: { 2: { frameId: 2, pauseSeq: 1, scopes: [], pointerGraph: null } } })
+
+    // 轮询到代次 2 → 缓存清空
+    mockedGet.mockResolvedValueOnce(snapshot({ pauseSeq: 2 }) as never)
+    await vi.advanceTimersByTimeAsync(800)
+    expect(useDebugStore.getState().snapshot?.pauseSeq).toBe(2)
+    expect(useDebugStore.getState().expandedVars).toEqual({})
+    expect(useDebugStore.getState().frameVars).toEqual({})
+
+    // 轮询到终态 → 再清 + selectedFrameId 复位
+    mockedGet.mockResolvedValueOnce(snapshot({ status: 'terminated', endReason: 'completed', pauseSeq: 2 }) as never)
+    await vi.advanceTimersByTimeAsync(1600)
+    expect(useDebugStore.getState().selectedFrameId).toBeNull()
+  })
+
+  it('selectFrame 触发帧变量加载并缓存（同代次不重复请求；过期代次丢弃）', async () => {
+    useDebugStore.setState({ snapshot: snapshot({ pauseSeq: 5 }) as never })
+    mockedFrameVars.mockResolvedValue({
+      frameId: 7, pauseSeq: 5,
+      scopes: [{ name: 'Locals', variablesReference: 9, expensive: false, variables: [] }],
+      pointerGraph: null,
+    })
+    await useDebugStore.getState().selectFrame(7)
+    await useDebugStore.getState().selectFrame(7) // 缓存命中
+    expect(mockedFrameVars).toHaveBeenCalledOnce()
+    expect(useDebugStore.getState().frameVars[7]?.pauseSeq).toBe(5)
+    expect(useDebugStore.getState().selectedFrameId).toBe(7)
+  })
+
   it('expandVar 懒加载并缓存（重复点击不重复请求）', async () => {
     useDebugStore.setState({ snapshot: snapshot() as never })
-    mockedExpand.mockResolvedValue({ variables: [{ name: 'inner', value: '7', type: null, variablesReference: 0 }] })
+    mockedExpand.mockResolvedValue({ variables: [{ name: 'inner', value: '7', type: null, evaluateName: null, variablesReference: 0 }] })
     await useDebugStore.getState().expandVar(3000)
     await useDebugStore.getState().expandVar(3000)
     expect(mockedExpand).toHaveBeenCalledOnce()

@@ -6,7 +6,7 @@
  * Docker 沙箱内 lldb-dap 的 DAP 响应（非 AI 推测）。
  * 本地交互（选中栈帧）零 LLM。
  */
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useDebugStore } from '../../stores/debugStore'
 
 interface VarSeen {
@@ -14,27 +14,40 @@ interface VarSeen {
   changes: number
 }
 
+/** 帧内变化历史：键 = 帧:代次（隔离递归同名变量与代次，D38）。 */
+const frameSeen = new Map<string, Map<string, VarSeen>>()
+
 export function DebugSnapshotView({ config }: { instanceId: string; config: Record<string, unknown> }) {
   const snapshot = useDebugStore((s) => s.snapshot)
+  const selectedFrameId = useDebugStore((s) => s.selectedFrameId)
+  const selectFrame = useDebugStore((s) => s.selectFrame)
   const maxFrames = typeof config.maxFrames === 'number' ? config.maxFrames : 8
-  const [selectedFrame, setSelectedFrame] = useState(0)
+  const selectedFrame = selectedFrameId ?? 0
 
   // 变量变化追踪：同一次会话内对比前后暂停的值（仅对顶帧 Locals）
   const locals = useMemo(() => {
     const scope = snapshot?.scopes.find((s) => s.name === 'Locals')
     return scope?.variables ?? []
   }, [snapshot?.scopes])
+  // 变化历史键 = 帧:暂停代次（换帧/新暂停即隔离；递归同名变量不串扰——D38）
   const historyRef = useMemo(() => new Map<string, VarSeen>(), [snapshot?.id])
   const varRows = useMemo(() => {
     const rows: Array<{ name: string; value: string; changed: boolean; changes: number }> = []
+    const seenKey = `f${selectedFrame}:p${snapshot?.pauseSeq ?? 0}`
+    let seen = frameSeen.get(seenKey)
+    if (!seen) {
+      frameSeen.clear() // 只保留当前帧+代次
+      seen = new Map()
+      frameSeen.set(seenKey, seen)
+    }
     for (const v of locals) {
-      const prev = historyRef.get(v.name)
+      const prev = seen.get(v.name)
       const changes = prev ? (prev.value === v.value ? prev.changes : prev.changes + 1) : 0
-      historyRef.set(v.name, { value: v.value, changes })
+      seen.set(v.name, { value: v.value, changes })
       rows.push({ name: v.name, value: v.value, changed: prev !== undefined && prev.value !== v.value, changes })
     }
     return rows
-  }, [locals, historyRef])
+  }, [locals, historyRef, selectedFrame, snapshot?.pauseSeq])
 
   if (!snapshot || snapshot.status === 'terminated') {
     return (
@@ -84,7 +97,7 @@ export function DebugSnapshotView({ config }: { instanceId: string; config: Reco
               <li key={frame.id}>
                 <button
                   type="button"
-                  onClick={() => setSelectedFrame(i)}
+                  onClick={() => selectFrame(frame.id)}
                   className={`flex w-full items-baseline gap-1.5 rounded px-1 py-0.5 text-left font-mono text-[10px] ${
                     i === Math.min(selectedFrame, frames.length - 1) ? 'bg-accent-soft text-ink' : 'text-ink-dim hover:bg-panel-2'
                   }`}
