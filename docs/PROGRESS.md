@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-10（P3.1 完成；仓库已推送 GitHub）
+更新时间：2026-10-10（P3.2 完成）
 
 ## 已完成（经过验证）
 
@@ -123,11 +123,19 @@
       无数据诚实空态）；D24 记录决策
 - [x] 验证（P2.6 轮）：SQLite 111 + PG 4 + 前端 140 用例、真实 DeepSeek 冒烟
       （H4 双防线：无请求 H2 / 请求后 H3）全过
-- [x] 验证：前端 vitest 150 个用例全过（viz 10：schema 默认值与拒绝非法/
-      注册表元数据与重复注册/来源标签与时间线渲染（system 条目过滤、相对
-      毫秒）/诚实空态/点击详情本地交互/未注册显式报错/内置场景渲染）；
-      typecheck/build 通过；dev 冒烟通过（viz 模块经 Vite 编译无错）；后端
-      本轮零改动（111+4 状态不变）
+- [x] **P3.2 变量状态组件 + L2 组合场景**：Worker 注入声明式观察 API
+      `observe(name, value)`（值复用运行器序列化，`observed` 消息流式回传，
+      D25）；runner onObserved 转发；runStore observations（上限 200）；
+      L1 组件 `variables-state`（按变量名分组：当前值/变化次数/展开历史，
+      本地交互零 LLM，空态引导 observe 用法）；场景
+      `runtime.variables-state.v1`（实验模式）与 **L2 组合场景
+      `runtime.debug-panel.v1`**（调试模式：时间线+变量状态纵向平分，
+      §9.1 组合协议）；SceneRenderer 多组件布局
+- [x] 验证（P3.1 轮）：前端 150 + dev 冒烟全过；git 推送 GitHub 成功
+- [x] 验证：前端 vitest 155 个用例全过（新增 5：vm 真实执行 observe
+      [含对象序列化与多次变化]/runner observed 转发/variables-state 分组与
+      展开与空态/L2 组合场景双组件同屏）；typecheck/build 通过；
+      后端 111+PG4 无回归（后端零改动）
 
 ### P1 验证汇总
 
@@ -137,7 +145,7 @@
 
 ## 未实现（明确标注，禁止伪装）
 
-- [ ] 第二类标准组件（调用栈/变量状态）与 L2 动态组合（AI 产出 SceneSpec）— P3.2
+- [ ] 调用栈标准组件（需真实调试器/插桩，不假装——D25 记录取舍）— P3.2+/P4
 - [ ] 真实执行数据绑定（traceId + codeVersion 过期标记）— P3.3
 - [ ] H4 之后的独立性迁移验证（依赖任务验收与 rubric）— P3.5
 - [ ] Guided 的阶段性检查/主动推进教学（需会话状态与更丰富证据）— P3+

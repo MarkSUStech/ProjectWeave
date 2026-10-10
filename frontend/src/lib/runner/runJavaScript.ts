@@ -27,6 +27,8 @@ export interface RunJavaScriptOptions {
   timeoutMs?: number
   /** 每条 console 输出的回调（流式）。 */
   onEntry?: (level: ConsoleLevel, text: string) => void
+  /** observe(name, value) 变量状态观察回调（流式）。 */
+  onObserved?: (name: string, value: string) => void
   /** 所有 Worker 消息的回调（含 test-result / test-summary），供测试模式使用。 */
   onMessage?: (message: WorkerMessage) => void
   /** 测试注入用。 */
@@ -37,14 +39,14 @@ export function runJavaScript(
   code: string,
   options: RunJavaScriptOptions = {},
 ): Promise<RunResult> {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, onEntry, onMessage, createWorker = defaultCreateWorker } = options
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, onEntry, onObserved, onMessage, createWorker = defaultCreateWorker } = options
   let worker: Worker
   try {
     worker = createWorker(buildWorkerSource(code))
   } catch (err) {
     return Promise.resolve({ ok: false, durationMs: 0, error: `无法创建运行环境：${String(err)}` })
   }
-  return runWorker(worker, { timeoutMs, onEntry, onMessage })
+  return runWorker(worker, { timeoutMs, onEntry, onObserved, onMessage })
 }
 
 function runWorker(
@@ -52,8 +54,14 @@ function runWorker(
   {
     timeoutMs,
     onEntry,
+    onObserved,
     onMessage,
-  }: { timeoutMs: number; onEntry?: RunJavaScriptOptions['onEntry']; onMessage?: RunJavaScriptOptions['onMessage'] },
+  }: {
+    timeoutMs: number
+    onEntry?: RunJavaScriptOptions['onEntry']
+    onObserved?: RunJavaScriptOptions['onObserved']
+    onMessage?: RunJavaScriptOptions['onMessage']
+  },
 ): Promise<RunResult> {
   const startedAt = Date.now()
 
@@ -78,6 +86,8 @@ function runWorker(
       onMessage?.(data)
       if (data.type === 'console') {
         onEntry?.(data.level, data.text)
+      } else if (data.type === 'observed') {
+        onObserved?.(data.name, data.text)
       } else if (data.type === 'done') {
         finish({ ok: true, durationMs: elapsed() })
       } else if (data.type === 'error') {

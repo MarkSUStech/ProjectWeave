@@ -8,6 +8,13 @@ export interface ConsoleMessage {
   text: string
 }
 
+/** observe(name, value) 上报的变量状态变化（真实执行采集，§9.4 图-代码闭环的教学通道）。 */
+export interface ObservedMessage {
+  type: 'observed'
+  name: string
+  text: string
+}
+
 /** 单个测试用例的执行结果（Worker → 主线程，流式）。 */
 export interface TestResultMessage {
   type: 'test-result'
@@ -27,6 +34,7 @@ export interface TestSummaryMessage {
 
 export type WorkerMessage =
   | ConsoleMessage
+  | ObservedMessage
   | TestResultMessage
   | TestSummaryMessage
   | { type: 'done'; result: string }
@@ -64,5 +72,13 @@ export interface TerminalEntry {
   kind: 'system' | ConsoleLevel
   text: string
   /** ISO 时间，用于渲染时间戳。 */
+  at: string
+}
+
+/** 变量状态观察记录（observe 上报，可视化组件数据源）。 */
+export interface Observation {
+  id: number
+  name: string
+  value: string
   at: string
 }

@@ -44,7 +44,7 @@ export function SceneRenderer({ scene }: { scene: unknown }) {
           <Badge tone={SOURCE_TONES[valid.sourceType]}>{SOURCE_LABELS[valid.sourceType]}</Badge>
         </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {valid.components.map((component) => {
           const meta = getComponent(component.type)
           if (!meta) {
@@ -57,7 +57,16 @@ export function SceneRenderer({ scene }: { scene: unknown }) {
             )
           }
           const View = meta.View
-          return <View key={component.id} instanceId={component.id} config={component.config} />
+          // L2 组合（§9.1）：多组件纵向平分画布，共享同一场景数据绑定。
+          const areaClass =
+            valid.components.length > 1
+              ? 'min-h-0 flex-1 border-b border-edge-soft last:border-b-0'
+              : 'min-h-0 flex-1 overflow-hidden'
+          return (
+            <div key={component.id} className={areaClass}>
+              <View instanceId={component.id} config={component.config} />
+            </div>
+          )
         })}
       </div>
     </div>

@@ -7,7 +7,7 @@ import { clearRegistryForTests, getComponent, listComponents, registerComponent 
 import { ensureBuiltinComponents } from '../viz/builtinComponents'
 import { SceneRenderer } from '../viz/SceneRenderer'
 import { useRunStore } from '../stores/runStore'
-import { LATEST_RUN_SCENE } from '../viz/scenes'
+import { DEBUG_PANEL_SCENE, LATEST_RUN_SCENE, VARIABLES_STATE_SCENE } from '../viz/scenes'
 
 const validScene: TeachingScene = {
   sceneId: 's1',
@@ -71,7 +71,12 @@ describe('SceneRenderer', () => {
   beforeEach(() => {
     clearRegistryForTests()
     ensureBuiltinComponents()
-    useRunStore.setState({ entries: [], running: false, activeTab: 'terminal' })
+    useRunStore.setState({
+      entries: [],
+      observations: [],
+      running: false,
+      activeTab: 'terminal',
+    })
   })
 
   it('渲染来源标签"真实执行"与运行输出时间线', () => {
@@ -122,5 +127,47 @@ describe('SceneRenderer', () => {
     render(<SceneRenderer scene={LATEST_RUN_SCENE} />)
     expect(screen.getByText('runtime.console-timeline.v1')).toBeTruthy()
     expect(screen.getByText('真实执行')).toBeTruthy()
+  })
+
+  it('variables-state：按变量分组显示当前值与变化次数，点击展开历史', async () => {
+    useRunStore.setState({
+      observations: [
+        { id: 1, name: 'count', value: '0', at: 't1' },
+        { id: 2, name: 'count', value: '41', at: 't2' },
+        { id: 3, name: 'count', value: '42', at: 't3' },
+        { id: 4, name: 'title', value: '"笔记"', at: 't4' },
+      ],
+    })
+    render(<SceneRenderer scene={VARIABLES_STATE_SCENE} />)
+    expect(screen.getByText('runtime.variables-state.v1')).toBeTruthy()
+    expect(screen.getByText('count')).toBeTruthy()
+    expect(screen.getByText('title')).toBeTruthy()
+    expect(screen.getByText('42')).toBeTruthy() // count 当前值
+    expect(screen.getByText(/3 次/)).toBeTruthy() // count 变化次数
+    expect(screen.getByText(/1 次/)).toBeTruthy() // title 变化次数
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText('count'))
+    expect(screen.getByText('#2')).toBeTruthy() // 展开的历史序列
+    expect(screen.getByText('41')).toBeTruthy()
+  })
+
+  it('variables-state 无观察数据时显示引导空态', () => {
+    render(<SceneRenderer scene={VARIABLES_STATE_SCENE} />)
+    expect(screen.getByText(/还没有观察数据/)).toBeTruthy()
+    expect(screen.getByText(/observe\(/)).toBeTruthy()
+  })
+
+  it('L2 组合场景：时间线 + 变量状态纵向同时渲染', () => {
+    useRunStore.setState({
+      entries: [{ id: 1, kind: 'log', text: '组合场景输出', at: 't1' }],
+      observations: [{ id: 1, name: 'x', value: '1', at: 't2' }],
+    })
+    render(<SceneRenderer scene={DEBUG_PANEL_SCENE} />)
+    expect(screen.getByText('runtime.debug-panel.v1')).toBeTruthy()
+    // 两组件同时可见：时间线输出 + 变量表
+    expect(screen.getByText(/组合场景输出/)).toBeTruthy()
+    expect(screen.getByText('x')).toBeTruthy()
+    expect(screen.getByText(/1 次/)).toBeTruthy()
   })
 })

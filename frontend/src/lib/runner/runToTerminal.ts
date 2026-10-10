@@ -36,6 +36,7 @@ export async function runFileInTerminal(
   const result = await runJavaScript(prepared.code, {
     timeoutMs: options.timeoutMs,
     onEntry: (level, text) => useRunStore.getState().appendEntry(level, text),
+    onObserved: (name, value) => useRunStore.getState().appendObservation(name, value),
   })
   useRunStore.getState().setRunning(false)
 

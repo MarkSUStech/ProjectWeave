@@ -19,3 +19,45 @@ export const LATEST_RUN_SCENE: TeachingScene = {
   ],
   allowedInteractions: ['点击条目查看详情'],
 }
+
+/** 变量状态单组件场景（实验模式主画布）。 */
+export const VARIABLES_STATE_SCENE: TeachingScene = {
+  sceneId: 'builtin:variables-state',
+  templateId: 'runtime.variables-state.v1',
+  objectiveId: null,
+  sourceType: 'runtime',
+  dataBinding: { ref: 'run:observations' },
+  components: [
+    {
+      id: 'variables',
+      type: 'variables-state',
+      config: {},
+    },
+  ],
+  allowedInteractions: ['点击变量展开变化序列'],
+}
+
+/**
+ * L2 组合场景（§9.1）：时间线 + 变量状态共享同一批真实运行数据，
+ * 支撑"输出 ↔ 状态"对照教学（附录 B M2：解释状态与 DOM 的区别）。
+ */
+export const DEBUG_PANEL_SCENE: TeachingScene = {
+  sceneId: 'builtin:debug-panel',
+  templateId: 'runtime.debug-panel.v1',
+  objectiveId: null,
+  sourceType: 'runtime',
+  dataBinding: { ref: 'run:latest' },
+  components: [
+    {
+      id: 'timeline',
+      type: 'console-timeline',
+      config: { maxEntries: 30 },
+    },
+    {
+      id: 'variables',
+      type: 'variables-state',
+      config: {},
+    },
+  ],
+  allowedInteractions: ['点击条目查看详情', '点击变量展开变化序列'],
+}

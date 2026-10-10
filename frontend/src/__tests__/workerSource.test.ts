@@ -89,4 +89,20 @@ describe('buildWorkerSource（真实执行）', () => {
     expect(texts).toEqual(['before', 'after'])
     expect(messages.at(-1)).toMatchObject({ type: 'done' })
   })
+
+  it('observe() 上报变量状态（含对象序列化）并正常结束', async () => {
+    const messages = await executeInSandbox(`
+      let count = 0
+      observe('count', count)
+      count = 41
+      observe('count', count)
+      observe('note', { title: 'a', tags: ['x'] })
+    `)
+    const observed = messages.filter((m) => m.type === 'observed')
+    expect(observed).toHaveLength(3)
+    expect(observed[0]).toMatchObject({ type: 'observed', name: 'count', text: '0' })
+    expect(observed[1]).toMatchObject({ name: 'count', text: '41' })
+    expect(observed[2].text).toContain('"title"')
+    expect(messages.at(-1)).toMatchObject({ type: 'done' })
+  })
 })

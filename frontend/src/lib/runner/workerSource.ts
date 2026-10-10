@@ -42,6 +42,11 @@ self.console = {
   warn: (...a) => __send('warn', a),
   error: (...a) => __send('error', a),
   debug: (...a) => __send('log', a),
+}
+// 变量状态观察 API（§9.4）：学生在代码中调用 observe('name', value)，
+// 值经 __serialize 后流式上报，供 variables-state 组件渲染真实执行数据。
+function observe(name, value) {
+  self.postMessage({ type: 'observed', name: String(name), text: __serialize(value) })
 }`
 
 export function buildWorkerSource(userCode: string): string {

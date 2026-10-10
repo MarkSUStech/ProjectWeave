@@ -49,6 +49,24 @@ describe('runJavaScript', () => {
     expect(fake.worker.terminate).toHaveBeenCalled()
   })
 
+  it('流式转发 observe 变量观察', async () => {
+    const fake = makeFakeWorker()
+    const onObserved = vi.fn()
+    const promise = runJavaScript('code', {
+      createWorker: () => fake.worker,
+      onObserved,
+      timeoutMs: 1000,
+    })
+    fake.emit('message', { type: 'observed', name: 'count', text: '1' })
+    fake.emit('message', { type: 'observed', name: 'count', text: '2' })
+    fake.emit('message', { type: 'done', result: 'undefined' })
+    await promise
+    expect(onObserved.mock.calls).toEqual([
+      ['count', '1'],
+      ['count', '2'],
+    ])
+  })
+
   it('用户异常返回 ok=false 与错误信息', async () => {
     const fake = makeFakeWorker()
     const promise = runJavaScript('code', { createWorker: () => fake.worker, timeoutMs: 1000 })

@@ -4,6 +4,19 @@
 
 ---
 
+## D25 · 变量状态采集：声明式 observe() API 而非自动插桩
+
+**背景**：FR-07 要求变量状态类可视化端到端。真实调用栈/变量跟踪需要 debugger 协议或 AST 插桩（工程重）；浏览器 Worker 中无 DAP。
+
+**决策**：Worker 注入**声明式观察 API** `observe(name, value)`——学生在代码中主动上报关心的变量，值复用运行器序列化（对象 JSON/循环引用等）后作为 `observed` 消息流式回传；runStore 维护观察序列（上限 200）。L1 组件 `variables-state` 按变量名分组渲染当前值 + 变化次数 + 可展开的历史序列（本地交互零 LLM）。
+- 新增场景：`runtime.variables-state.v1`（实验模式）；**L2 组合场景** `runtime.debug-panel.v1`（调试模式 = 时间线 + 变量状态纵向平分画布，共享同一运行数据，§9.1 组合协议）；SceneRenderer 支持多组件布局。
+
+**理由**：观察点由学习者选择本身就是教学行为（对应附录 B M2"解释状态与 DOM 的区别"）；数据是真实执行采集（runtime 标签），不伪造调试器能力。调用栈组件待远程调试器接入再做（不假装）。
+
+**影响**：P3.3 的 codeVersion 绑定将同时覆盖 entries 与 observations；自动插桩（每语句快照）可作为后续增强。
+
+---
+
 ## D24 · Visual Engine 地基：结构化场景 + 注册表渲染，禁止 LLM 生成 React 代码
 
 **背景**：P3.1 落地 Visual Interaction Engine（设计 §9）。核心红线：不让 LLM 每次生成新的可视化代码；数据来源必须可信标注。
