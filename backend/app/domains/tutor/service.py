@@ -18,6 +18,58 @@ MAX_MESSAGE_CHARS = 3000
 MAX_TARGET_CONCEPTS = 5
 MAX_CONTEXT_EVENTS = 8
 
+# 工作台动作（§10.2）：kind → 权限等级。A2（propose-patch）为答案级内容，
+# 必须随 requestAnswerLevel 一并放行（与 D23 H4 门控联动）。
+WORKSPACE_KIND_LEVELS = {
+    "display-notice": "A0",
+    "switch-layout": "A1",
+    "propose-patch": "A2",
+}
+LAYOUT_MODES = {"coding", "debugging", "visual-learning", "architecture"}
+MAX_WORKSPACE_ACTIONS = 3
+
+
+def validate_workspace_actions(actions, request_answer_level: bool) -> tuple[list[dict], list[str]]:
+    """对 LLM 提案的工作台动作做确定性分级与校验（§10.2/§13.3）。
+
+    返回 (通过的动作列表, 被移除动作的原因列表)。非法/越权动作被移除，
+    决策本身仍可用（部分降级而非整体拒绝）。
+    """
+    valid: list[dict] = []
+    dropped: list[str] = []
+    if not isinstance(actions, list):
+        return [], ["workspaceActions 非法（不是数组），全部移除"]
+    for action in actions:
+        if not isinstance(action, dict):
+            dropped.append("动作不是对象，已移除")
+            continue
+        if len(valid) >= MAX_WORKSPACE_ACTIONS:
+            dropped.append(f"动作数量超过上限（{MAX_WORKSPACE_ACTIONS}），多余的已移除")
+            continue
+        kind = action.get("kind")
+        level = WORKSPACE_KIND_LEVELS.get(kind)
+        if level is None:
+            dropped.append(f"未知动作类型：{kind}")
+            continue
+        payload = action.get("payload") or {}
+        reason = str(action.get("reason", ""))[:200]
+        if kind == "display-notice" and not str(payload.get("message", "")).strip():
+            dropped.append("display-notice 缺少 message")
+            continue
+        if kind == "switch-layout":
+            if payload.get("mode") not in LAYOUT_MODES:
+                dropped.append(f"switch-layout 非法模式：{payload.get('mode')}")
+                continue
+        if kind == "propose-patch":
+            if not request_answer_level:
+                dropped.append("propose-patch 属答案级内容（A2），需用户明确请求答案级帮助")
+                continue
+            if not str(payload.get("path", "")).strip() or not str(payload.get("description", "")).strip():
+                dropped.append("propose-patch 缺少 path 或 description")
+                continue
+        valid.append({"kind": kind, "level": level, "reason": reason, "payload": payload})
+    return valid, dropped
+
 
 class TutorError(Exception):
     def __init__(self, message: str, status: int = 422) -> None:
@@ -89,12 +141,18 @@ SYSTEM_PROMPT = """你是 ProjectWeave 教学 IDE 中的 AI 导师。你的目�
 你只输出一个 JSON 对象，结构为：
 {
   "intent": "question|hint|explain|encourage|redirect",
-  "hintLevel": 0-4 的整数（0=只提问不给提示，1=方向提示，2=讲概念与思路，3=结构/伪代码级提示，4=参考实现，仅当用户明确要求完整答案）,
+  "hintLevel": 0-4 的整数（0=只提问不给提示，1=方向提示，2=讲概念与思路，3=结构/伪代码级提示，4=参考实现，仅当用户明确请求完整答案）,
   "message": "给学习者看的教学回复",
   "targetConceptIds": ["相关概念 id，最多 5 个"],
   "explanation": "给系统的一句话决策理由",
-  "confidence": 0 到 1 之间的小数
-}"""
+  "confidence": 0 到 1 之间的小数,
+  "workspaceActions": [
+    {"kind": "display-notice|switch-layout|propose-patch", "reason": "为什么建议这个工作台动作",
+     "payload": {"message": "..."} 或 {"mode": "coding|debugging|visual-learning|architecture"} 或 {"path": "文件路径", "description": "补丁说明"}}
+  ]
+}
+
+workspaceActions 可以为空数组。仅在有明确教学价值时建议；propose-patch 只在用户明确要求答案级帮助时使用。"""
 
 
 def build_user_prompt(question: str, context: dict) -> str:
@@ -171,6 +229,11 @@ def create_turn(
         raise TutorError("AI 返回的不是合法 JSON，请重试", status=502) from exc
 
     fields, outcome, outcome_reason = policy_gate(proposal, request_answer_level)
+    workspace_actions, dropped_actions = validate_workspace_actions(
+        proposal.get("workspaceActions"), request_answer_level
+    )
+    if dropped_actions and not outcome_reason:
+        outcome_reason = "工作台动作部分移除：" + "；".join(dropped_actions[:2])
     decision = TeachingDecision(
         project_id=project.id,
         question=question,
@@ -183,6 +246,7 @@ def create_turn(
         confidence=fields["confidence"],
         outcome=outcome,
         outcome_reason=outcome_reason,
+        workspace_actions=workspace_actions,
         policy_version=POLICY_VERSION,
         prompt_tokens=result.prompt_tokens,
         completion_tokens=result.completion_tokens,

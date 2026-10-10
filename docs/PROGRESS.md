@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-10（P3.5 完成）
+更新时间：2026-10-10（P3.4 完成，P3 全部交付）
 
 ## 已完成（经过验证）
 
@@ -150,12 +150,20 @@
       （未完成 422）；**coding 证据 → application 维首次真实数据**（失败也
       是证据）；task-evaluated 事件；详情页任务徽标含"需修正"；D27 记录
       决策（任务级测试绑定待课程内容制作）
-- [x] 验证：SQLite pytest 117 个用例全过（验收 6：全绿 done+application 维/
-      失败 needs-fix+失败证据+修复重验收累积/errorFiles 判失败/空套件不通过/
-      依赖闸门与解锁/404）；PG 套件 4 个全过；前端 vitest 170 个全过
-      （evaluateTask API 2 + 详情页验收流 3：提交参数与状态刷新/422 可见/
-      done 后按钮隐藏）；typecheck/build 通过；TestClient 端到端冒烟全通
-      （闸门 422 → 全绿 done → application estimate=1.0 → 事件 passed）
+- [x] **P3.4 WorkspaceAction 权限等级**：后端 TeachingDecision 增加
+      workspace_actions（Gate 分级 A0/A1/A2 + payload 校验 + 数量封顶 +
+      **A2 与 H4 门控联动**：补丁未随 requestAnswerLevel 一律移除）；
+      前端 `lib/workspace/executor.ts` 确定性执行链（A0 通知 / **A1 布局
+      锁定联防 [AT-05] + 撤销栈 [撤销亦受锁定约束]** / A2 确认队列→
+      仅写草稿不自动保存）；`WorkspaceNoticeStrip` 通知条组件（新文件）；
+      每动作上报 workspace-action 审计事件；**UI 挂载单行接入点已备好，
+      因并行 Agent 正在重构 IdePage/MentorPanel 主动避让（D28）**
+- [x] 验证（P3.5 轮）：SQLite 117 + PG 4 + 前端 170 全过；推送（6b4b78f）
+- [x] 验证：SQLite pytest 123 个用例全过（workspace 6：分级分类/A2 需答案级
+      请求/五类非法移除/非列表与封顶/端到端携带动作与原因落库/H4 联动
+      [未请求降级+动作移除，请求后消息与 A2 均放行]）；PG 4 全过；前端
+      vitest 186 个全过（workspace 10：A0/A1 执行与撤销/锁定拒绝含 AT-05/
+      撤销尊重锁定/A2 三态/通知条 UI）；typecheck/build 全过（含并行文件）
 
 ### P1 验证汇总
 

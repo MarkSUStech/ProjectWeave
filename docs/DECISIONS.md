@@ -4,6 +4,19 @@
 
 ---
 
+## D28 · WorkspaceAction：后端分级校验 + 前端确定性执行器（A0/A1/A2），UI 挂载避让并行开发
+
+**背景**：P3.4 落地 §10.2 三级权限。仓库存在并行前端 Agent 正重构 IdePage/MentorPanel——本轮**不编辑这两个宿主文件**，执行器与通知条作为独立模块交付。
+
+**决策**：
+- **后端（提案侧）**：TeachingDecision 新增 `workspace_actions`；`validate_workspace_actions` 确定性分级（display-notice→A0 / switch-layout→A1 / propose-patch→A2）+ payload 校验（模式白名单/消息必填/path+description 必填）+ 数量封顶 3；**A2 补丁提案未随 requestAnswerLevel 时移除**（与 D23 H4 门控联动——补丁即答案级内容）；非法动作移除并记入 outcome_reason（部分降级而非整体拒绝）；系统提示词输出结构扩展 workspaceActions。
+- **前端（执行侧）**：`lib/workspace/executor.ts` 确定性执行链——A0 立即通知；**A1 尊重布局锁定**（锁定→拒绝+原因+rejected 事件，AT-05；未锁定→切换+撤销栈，撤销同样受锁定约束）；**A2 一律进确认队列**（展示 path/description/风险文案，确认后仅写入编辑器草稿、绝不自动保存；目标文件未打开则如实提示不应用）；每个动作上报 `workspace-action` 审计事件（executed/rejected/needs-confirmation/confirmed/undone）。
+- **挂载方式**：`WorkspaceNoticeStrip`（新组件）+ 决策回调处调用 `applyWorkspaceActions(decision, projectId)`——单行接入点已就绪，待并行前端合入后挂载（IdePage 画布顶部或 MentorPanel）。
+
+**影响**：P3 全部条目交付（挂载为收尾一行）；A2 确认应用草稿后 H4 的独立性重测可引用 workspace-action 事件；撤销栈为会话级（不持久化，与设计 §10.2 undoToken 语义一致——token=decisionId:index）。
+
+---
+
 ## D27 · 阶段验收：浏览器测试结果提交 + 确定性 rubric（套件全绿）+ coding→application 证据
 
 **背景**：P3.5 落地任务验收（设计 §2.3/§6.5/§13.1）。判定必须由确定性程序完成，AI 口头评价不替代测试与 rubric；测试在浏览器沙箱执行（D11），后端无法自行运行。

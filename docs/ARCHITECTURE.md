@@ -56,7 +56,8 @@
 - **领域模块** `app/domains/tutor/`（P2.5/P2.6，Tutor Engine）：
   - `models.py`：`teaching_decisions`（问题、trigger=user/auto、提案字段、Policy Gate outcome 与原因、policy_version、token/model）。
   - `service.py`：确定性上下文组装（只读各域 models：路线活动/mastery/最近事件/任务/规格）、防注入提示词（CONTEXT 分隔）、`policy_gate`（intent 白名单/hintLevel 0-4/**H4 须 requestAnswerLevel**/message 长度/概念数校验，不合规降级为安全动作）、`get_suggestion`（介入模式裁决：quiet 拒绝；连续 ≥3 次运行失败证据；60s 冷却）。
-  - `router.py`：`POST /tutor/turns`（含 requestAnswerLevel）、`GET /tutor/suggestions`（拉取式主动建议）、`GET /tutor/decisions`；决策追加 `tutor-turn` 事件（payload 含 trigger/answerRequested）。
+  - `router.py`：`POST /tutor/turns`（含 requestAnswerLevel）、`GET /tutor/suggestions`（拉取式主动建议）、`GET /tutor/decisions`；决策追加 `tutor-turn` 事件（payload 含 trigger/answerRequested）。决策可携带 **workspace_actions**（Gate 分级 A0/A1/A2 + payload 校验 + H4 联动，D28）。
+- **工作台动作执行（前端，P3.4/D28）**：`lib/workspace/executor.ts` 确定性执行链（A0 通知 / A1 布局切换×锁定联防+撤销栈 / A2 确认队列→草稿）；`stores/workspaceStore.ts`（通知/撤销栈/待确认补丁）；`WorkspaceNoticeStrip` 自包含通知条组件（挂载点待并行前端合入，D28）；每动作上报 `workspace-action` 审计事件。
 - **领域模块** `app/domains/settings/`（P2.6）：`user_settings`（owner 主键、interventionMode quiet/adaptive/guided，默认 adaptive）；`GET/PATCH /api/v1/settings`。
 - **数据层**：`app/core/db.py` — 同步 engine + `get_db` 请求级会话依赖。开发/单测默认 SQLite；`PW_DATABASE_URL` 切换 PostgreSQL（docker compose 的 PG 16 映射宿主机 **5433**，已通过兼容性验证，见 D16）。
 - **迁移**：Alembic，`migrations/env.py` 从应用设置读连接串；三个迁移（projects、project_files、code_snapshots）在 SQLite 与 PostgreSQL 上均验证可 upgrade/downgrade/重放。
@@ -97,6 +98,7 @@
 | GET | /api/v1/tutor/suggestions?projectId= | 主动建议（quiet 拒绝/连续失败证据/60s 冷却，拉取式） |
 | GET | /api/v1/tutor/decisions?projectId= | 教学决策历史（含 outcome 与 token 用量） |
 | GET / PATCH | /api/v1/settings | 用户 AI 偏好（interventionMode：quiet/adaptive/guided） |
+| （前端上报） | workspace-action 事件 | 工作台动作执行结果审计（executed/rejected/needs-confirmation/confirmed/undone） |
 
 OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。
 

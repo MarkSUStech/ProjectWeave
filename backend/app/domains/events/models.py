@@ -30,6 +30,7 @@ CLIENT_EVENT_TYPES = {
     "code-run",            # 浏览器运行（来源：前端上报）
     "tests-run",           # 浏览器测试运行（来源：前端上报）
     "tutor-turn",          # AI 教学回合（来源：后端 tutor）
+    "workspace-action",    # 工作台动作执行结果（前端执行器上报：executed/rejected/confirmed）
 }
 EVENT_TYPES = SERVER_EVENT_TYPES | CLIENT_EVENT_TYPES
 

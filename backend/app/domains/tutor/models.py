@@ -44,6 +44,8 @@ class TeachingDecision(Base):
     # Policy Gate 结果：accepted / degraded / rejected
     outcome: Mapped[str] = mapped_column(String(20), default="accepted")
     outcome_reason: Mapped[str] = mapped_column(String(500), default="")
+    # Policy Gate 分级后的工作台动作提案（§10.2：A0/A1/A2）
+    workspace_actions: Mapped[list] = mapped_column(JSONType, default=list)
     policy_version: Mapped[str] = mapped_column(String(20), default=POLICY_VERSION)
     prompt_tokens: Mapped[int] = mapped_column(default=0)
     completion_tokens: Mapped[int] = mapped_column(default=0)

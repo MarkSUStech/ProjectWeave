@@ -15,6 +15,13 @@ class TutorTurnRequest(APIModel):
     requestAnswerLevel: bool = False
 
 
+class WorkspaceActionRead(APIModel):
+    kind: str
+    level: str = Field(pattern="^A[012]$")
+    reason: str
+    payload: dict
+
+
 class TutorDecisionRead(APIModel):
     id: UUID
     project_id: UUID
@@ -28,6 +35,7 @@ class TutorDecisionRead(APIModel):
     confidence: float
     outcome: str
     outcome_reason: str
+    workspace_actions: list[WorkspaceActionRead] = Field(default_factory=list)
     policy_version: str
     prompt_tokens: int
     completion_tokens: int

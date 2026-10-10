@@ -1,7 +1,7 @@
 /** 学习事件契约（镜像 backend/app/domains/events/schemas.py）。 */
 import { z } from 'zod'
 
-export const CLIENT_EVENT_TYPES = ['code-run', 'tests-run'] as const
+export const CLIENT_EVENT_TYPES = ['code-run', 'tests-run', 'workspace-action'] as const
 export type ClientEventType = (typeof CLIENT_EVENT_TYPES)[number]
 
 export const eventReadSchema = z.object({
