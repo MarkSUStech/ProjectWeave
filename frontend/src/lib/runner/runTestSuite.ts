@@ -13,6 +13,7 @@ import type { FileMeta } from '../../types/file'
 import type { TestFileResult } from '../../types/runner'
 import { useTestStore } from '../../stores/testStore'
 import { useRunStore } from '../../stores/runStore'
+import { fingerprint } from '../fingerprint'
 import { isTestPath, prepareScript } from './runFile'
 import { runTests } from './runJavaScript'
 
@@ -46,6 +47,9 @@ export async function runTestSuite(
   useTestStore.getState().setRunning(true)
   useTestStore.getState().resetResults(testPaths.length)
 
+  // 版本绑定：traceId + 全部被执行内容（草稿优先）的联合指纹（§14.3）。
+  const traceId = crypto.randomUUID()
+  const executedContents: string[] = []
   const summary: TestSuiteSummary = { totalFiles: testPaths.length, totalPassed: 0, totalFailed: 0, errorFiles: 0 }
 
   for (const path of testPaths) {
@@ -57,6 +61,7 @@ export async function runTestSuite(
           : await (options.loadContent
               ? options.loadContent(path)
               : readFile(projectId, path).then((file) => file.content))
+      executedContents.push(`${path}\n${raw}`)
       const prepared = await prepareScript(path, raw)
       if (prepared.status === 'unsupported') {
         result = { path, status: 'error', error: prepared.reason, cases: [] }
@@ -83,5 +88,11 @@ export async function runTestSuite(
   }
 
   useTestStore.getState().setRunning(false)
+  useRunStore.getState().setTrace({
+    traceId,
+    fingerprint: await fingerprint(...executedContents),
+    runPath: null,
+    at: new Date().toISOString(),
+  })
   return summary
 }

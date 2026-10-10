@@ -13,6 +13,7 @@ import { BottomPanel } from '../components/ide/BottomPanel'
 import { CanvasPlaceholder } from '../components/ide/CanvasPlaceholder'
 import { SceneRenderer } from '../viz/SceneRenderer'
 import { DEBUG_PANEL_SCENE, VARIABLES_STATE_SCENE } from '../viz/scenes'
+import { fingerprint } from '../lib/fingerprint'
 import { useIdeUiStore } from '../stores/ideUiStore'
 import { useRunStore } from '../stores/runStore'
 import { useTestStore } from '../stores/testStore'
@@ -138,9 +139,10 @@ function IdeWorkspace({ project }: { project: Project }) {
     const summary = await runTestSuite(project.id, files, {
       currentDraft: openPath ? { path: openPath, content: draftContent } : undefined,
     })
+    const traceId = useRunStore.getState().trace?.traceId ?? null
     trackClientEvent(
       'tests-run',
-      { files: summary.totalFiles, passed: summary.totalPassed, failed: summary.totalFailed },
+      { files: summary.totalFiles, passed: summary.totalPassed, failed: summary.totalFailed, traceId },
       { projectId: project.id },
     )
     void maybeFetchSuggestion(summary.totalFailed > 0 || summary.errorFiles > 0)
@@ -154,11 +156,35 @@ function IdeWorkspace({ project }: { project: Project }) {
       return
     }
     const startedAt = Date.now()
-    void runFileInTerminal(openPath, draftContent).then((status) => {
-      trackClientEvent('code-run', { path: openPath, status, durationMs: Date.now() - startedAt }, { projectId: project.id })
+    void runFileInTerminal(openPath, draftContent).then(({ status, traceId }) => {
+      trackClientEvent('code-run', { path: openPath, status, durationMs: Date.now() - startedAt, traceId }, { projectId: project.id })
       void maybeFetchSuggestion(status !== 'ok')
     })
   }, [project.id, openPath, draftContent, files, handleRunTests, maybeFetchSuggestion])
+
+  // §14.3 过期判定：草稿指纹与最近一次"单文件运行"的指纹不一致 → 画布标记过期。
+  // （测试套件 trace 的 runPath 为 null，不参与单文件比对。）
+  const runTrace = useRunStore((state) => state.trace)
+  const [draftFingerprint, setDraftFingerprint] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    if (openPath === null) {
+      setDraftFingerprint(null)
+      return
+    }
+    void fingerprint(openPath, draftContent).then((value) => {
+      if (!cancelled) setDraftFingerprint(value)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [openPath, draftContent])
+  const canvasStale =
+    runTrace !== null &&
+    runTrace.runPath !== null &&
+    runTrace.runPath === openPath &&
+    draftFingerprint !== null &&
+    runTrace.fingerprint !== draftFingerprint
 
   const editor = (
     <EditorPanel
@@ -225,14 +251,14 @@ function IdeWorkspace({ project }: { project: Project }) {
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 shrink-0 basis-3/5">{editor}</div>
             <div className="min-h-0 flex-1 border-t border-edge">
-              <SceneRenderer scene={DEBUG_PANEL_SCENE} />
+              <SceneRenderer scene={DEBUG_PANEL_SCENE} trace={runTrace} stale={canvasStale} />
             </div>
           </div>
         )}
         {mode === 'visual-learning' && (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 flex-1">
-              <SceneRenderer scene={VARIABLES_STATE_SCENE} />
+              <SceneRenderer scene={VARIABLES_STATE_SCENE} trace={runTrace} stale={canvasStale} />
             </div>
             <div className="min-h-0 shrink-0 basis-1/4">{editor}</div>
           </div>

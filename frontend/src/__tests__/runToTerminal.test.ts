@@ -53,7 +53,7 @@ describe('runFileInTerminal', () => {
       return { ok: true, durationMs: 12 } satisfies RunResult
     })
 
-    const status = await runFileInTerminal('src/main.ts', 'const a: number = 1;')
+    const { status } = await runFileInTerminal('src/main.ts', 'const a: number = 1;')
     expect(status).toBe('ok')
     expect(mockedRun).toHaveBeenCalledWith('transpiled-code', expect.anything())
 
@@ -75,7 +75,7 @@ describe('runFileInTerminal', () => {
       transpiled: false,
       reason: '不支持 .md 文件',
     })
-    const status = await runFileInTerminal('README.md', '# hi')
+    const { status } = await runFileInTerminal('README.md', '# hi')
     expect(status).toBe('unsupported')
     expect(mockedRun).not.toHaveBeenCalled()
     const entries = useRunStore.getState().entries
@@ -85,14 +85,14 @@ describe('runFileInTerminal', () => {
   it('运行失败时输出错误摘要并返回 error/timeout', async () => {
     mockedPrepare.mockResolvedValue({ status: 'ok', code: 'c', transpiled: false })
     mockedRun.mockResolvedValue({ ok: false, durationMs: 5001, error: '执行超时（>5000ms），已强制终止。' })
-    const status = await runFileInTerminal('a.js', 'while(true){}')
+    const { status } = await runFileInTerminal('a.js', 'while(true){}')
     expect(status).toBe('timeout')
     expect(useRunStore.getState().entries.at(-1)?.text).toContain('超时')
   })
 
   it('已有运行进行中时拒绝并发运行', async () => {
     useRunStore.setState({ running: true })
-    const status = await runFileInTerminal('a.js', 'x')
+    const { status } = await runFileInTerminal('a.js', 'x')
     expect(status).toBe('error')
     expect(mockedRun).not.toHaveBeenCalled()
   })

@@ -8,6 +8,8 @@ import { SOURCE_LABELS, teachingSceneSchema, type TeachingScene } from './sceneS
 import { getComponent } from './registry'
 import { ensureBuiltinComponents } from './builtinComponents'
 import { Badge } from '../components/ui/Badge'
+import { shortFingerprint } from '../lib/fingerprint'
+import type { RunTrace } from '../stores/runStore'
 
 const SOURCE_TONES = {
   runtime: 'ok',
@@ -15,7 +17,15 @@ const SOURCE_TONES = {
   conceptual: 'warn',
 } as const
 
-export function SceneRenderer({ scene }: { scene: unknown }) {
+export interface SceneRendererProps {
+  scene: unknown
+  /** 最近一次运行的追踪信息（时间/指纹），显示在场景头部。 */
+  trace?: RunTrace | null
+  /** true = 数据已过期（代码在运行后修改，§14.3），画布显示过期横幅。 */
+  stale?: boolean
+}
+
+export function SceneRenderer({ scene, trace = null, stale = false }: SceneRendererProps) {
   ensureBuiltinComponents()
 
   const parsed = teachingSceneSchema.safeParse(scene)
@@ -36,6 +46,16 @@ export function SceneRenderer({ scene }: { scene: unknown }) {
           {valid.templateId}
         </span>
         <div className="flex shrink-0 items-center gap-1.5">
+          {trace && (
+            <span
+              className="font-mono text-[10px] text-ink-faint"
+              title={`trace ${trace.traceId} · 指纹 ${trace.fingerprint}`}
+            >
+              {new Date(trace.at).toLocaleTimeString('zh-CN', { hour12: false })}
+              {' · '}
+              {shortFingerprint(trace.fingerprint)}
+            </span>
+          )}
           {valid.allowedInteractions.map((interaction) => (
             <span key={interaction} className="text-[10px] text-ink-faint">
               {interaction}
@@ -44,6 +64,14 @@ export function SceneRenderer({ scene }: { scene: unknown }) {
           <Badge tone={SOURCE_TONES[valid.sourceType]}>{SOURCE_LABELS[valid.sourceType]}</Badge>
         </div>
       </header>
+      {stale && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center gap-2 border-b border-warn/30 bg-warn/10 px-3 py-1.5 text-[11px] text-warn"
+        >
+          ⚠ 数据已过期：代码在本次运行后已修改，以下显示的是旧执行数据——重新运行以更新。
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {valid.components.map((component) => {
           const meta = getComponent(component.type)

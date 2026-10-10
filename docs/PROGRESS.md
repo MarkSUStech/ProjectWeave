@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-10（P3.2 完成）
+更新时间：2026-10-10（P3.3 完成）
 
 ## 已完成（经过验证）
 
@@ -132,10 +132,18 @@
       `runtime.debug-panel.v1`**（调试模式：时间线+变量状态纵向平分，
       §9.1 组合协议）；SceneRenderer 多组件布局
 - [x] 验证（P3.1 轮）：前端 150 + dev 冒烟全过；git 推送 GitHub 成功
-- [x] 验证：前端 vitest 155 个用例全过（新增 5：vm 真实执行 observe
-      [含对象序列化与多次变化]/runner observed 转发/variables-state 分组与
-      展开与空态/L2 组合场景双组件同屏）；typecheck/build 通过；
-      后端 111+PG4 无回归（后端零改动）
+- [x] **P3.3 运行数据版本绑定（§14.3）**：`lib/fingerprint.ts` 执行内容指纹
+      （SHA-256(path\0content)，无 subtle 环境降级 FNV-1a）；runStore `trace`
+      （traceId/指纹/路径/时间），code-run 与 tests-run 均在运行时写入；
+      学习事件携带 traceId；SceneRenderer 头部显示运行时间 + 指纹缩写；
+      IdePage 持续比对草稿指纹与单文件运行指纹 → **画布"数据已过期"横幅
+      （旧执行数据不冒充当前）**；D26 记录服务器 codeVersion（已保存）与
+      执行指纹（草稿）的两层语义
+- [x] 验证（P3.2 轮）：前端 155 + 后端 111 全过；推送 GitHub（05b2319）
+- [x] 验证：前端 vitest 165 个用例全过（新增 10：指纹确定性/多文件顺序参与/
+      缩写、trace 写入与 traceId 返回/新运行新 trace/不支持类型不写 trace、
+      过期横幅与 trace 头部、旧用例适配新返回形状）；typecheck/build 通过；
+      后端 111+PG4 零改动无回归
 
 ### P1 验证汇总
 
@@ -145,8 +153,8 @@
 
 ## 未实现（明确标注，禁止伪装）
 
+- [ ] trace 落库（execution_traces 表）与服务器 codeVersion 双向关联 — 远程沙箱阶段
 - [ ] 调用栈标准组件（需真实调试器/插桩，不假装——D25 记录取舍）— P3.2+/P4
-- [ ] 真实执行数据绑定（traceId + codeVersion 过期标记）— P3.3
 - [ ] H4 之后的独立性迁移验证（依赖任务验收与 rubric）— P3.5
 - [ ] Guided 的阶段性检查/主动推进教学（需会话状态与更丰富证据）— P3+
 - [ ] 推送式建议（WebSocket）与忽略/暂停按钮的持久化 — P1.6+/P3

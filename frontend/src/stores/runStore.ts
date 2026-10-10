@@ -15,14 +15,25 @@ const MAX_OBSERVATIONS = 200
 let nextEntryId = 1
 let nextObservationId = 1
 
+/** 最近一次运行的追踪信息（§14.3：画布数据与被执行代码的版本绑定）。 */
+export interface RunTrace {
+  traceId: string
+  /** 被执行内容的指纹（SHA-256(path\0content)，多文件用 \n 连接）。 */
+  fingerprint: string
+  runPath: string | null
+  at: string
+}
+
 interface RunStoreState {
   entries: TerminalEntry[]
   observations: Observation[]
   running: boolean
+  trace: RunTrace | null
   activeTab: BottomTab
   appendEntry: (kind: 'system' | ConsoleLevel, text: string) => void
   appendObservation: (name: string, value: string) => void
   setRunning: (running: boolean) => void
+  setTrace: (trace: RunTrace) => void
   setActiveTab: (tab: BottomTab) => void
   clear: () => void
 }
@@ -31,6 +42,7 @@ export const useRunStore = create<RunStoreState>((set) => ({
   entries: [],
   observations: [],
   running: false,
+  trace: null,
   activeTab: 'terminal',
   appendEntry: (kind, text) =>
     set((state) => {
@@ -55,6 +67,7 @@ export const useRunStore = create<RunStoreState>((set) => ({
       }
     }),
   setRunning: (running) => set({ running }),
+  setTrace: (trace) => set({ trace }),
   setActiveTab: (activeTab) => set({ activeTab }),
-  clear: () => set({ entries: [], observations: [] }),
+  clear: () => set({ entries: [], observations: [], trace: null }),
 }))
