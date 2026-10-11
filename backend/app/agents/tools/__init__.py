@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from app.agents.registry import registry
+from app.agents.registry import tutor_registry
 from app.agents.schemas import ToolContext, ToolSpec
 
 
@@ -186,16 +186,16 @@ def _get_debug_snapshot(ctx: ToolContext) -> dict:
 
 def register_builtin_tools() -> None:
     """幂等注册第一批只读工具（Tutor Agent 使用）。"""
-    if registry.names():
+    if tutor_registry.names():
         return
-    registry.register(ToolSpec(
+    tutor_registry.register(ToolSpec(
         name="list_project_files",
         description="列出当前项目的全部文件（路径与大小）。用于了解项目结构。",
         parameters={"type": "object", "properties": {}, "required": []},
         handler=_list_project_files,
         max_result_chars=3000,
     ))
-    registry.register(ToolSpec(
+    tutor_registry.register(ToolSpec(
         name="read_project_file",
         description="读取当前项目的一个源码文件（相对路径）。可限制返回字符数。",
         parameters={
@@ -209,7 +209,7 @@ def register_builtin_tools() -> None:
         handler=_read_project_file,
         max_result_chars=9000,
     ))
-    registry.register(ToolSpec(
+    tutor_registry.register(ToolSpec(
         name="get_current_task",
         description="获取当前学习任务（或指定任务）的描述、目标、知识要求、测试与验收条件、渐进提示。",
         parameters={
@@ -220,14 +220,14 @@ def register_builtin_tools() -> None:
         handler=_get_current_task,
         max_result_chars=5000,
     ))
-    registry.register(ToolSpec(
+    tutor_registry.register(ToolSpec(
         name="get_recent_diagnostics",
         description="获取最近几次真实执行/测试的错误：编译诊断（文件:行:列）、运行 stderr、失败测试、超时。",
         parameters={"type": "object", "properties": {}, "required": []},
         handler=_get_recent_diagnostics,
         max_result_chars=6000,
     ))
-    registry.register(ToolSpec(
+    tutor_registry.register(ToolSpec(
         name="get_learner_mastery",
         description="查询学习者对各知识概念的掌握估计（各维度证据与置信度）。可按概念 id 过滤。",
         parameters={
@@ -240,7 +240,7 @@ def register_builtin_tools() -> None:
         handler=_get_learner_mastery,
         max_result_chars=5000,
     ))
-    registry.register(ToolSpec(
+    tutor_registry.register(ToolSpec(
         name="get_debug_snapshot",
         description="获取本项目最近一次调试会话的真实快照：暂停位置、调用栈、局部变量、已验证指针关系。",
         parameters={"type": "object", "properties": {}, "required": []},

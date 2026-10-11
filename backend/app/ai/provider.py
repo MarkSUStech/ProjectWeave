@@ -122,6 +122,7 @@ class DeepSeekProvider(LLMProvider):
             "model": self.model,
             "messages": messages,
             "temperature": 0.3,
+            "max_tokens": 8192,
         }
         if tools:
             payload["tools"] = tools

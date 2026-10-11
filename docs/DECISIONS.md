@@ -569,3 +569,20 @@
 **安全边界**：工具白名单（LLM 不能构造任意后端调用）；参数校验 + 项目行级权限；预算三重限制；工具结果声明为数据（防注入）；无任何写操作/Shell 执行/敏感配置暴露。
 
 **验证**：后端 232 全过（新增 20：注册表/校验/跨项目/穿越/截断/单次与连续调用/按结果决策/未知工具恢复/坏参恢复/轮数耗尽/调用预算/Token 预算/H4 门控/A2 门控/轨迹落库/降级路径）；**真实 DeepSeek E2E**（5.7s：诊断→读文件→H1 提示引用真实行号与真实错误内容）；前端 271 全过（轨迹渲染测试）。未来 Course Architect 直接复用 Runtime + Registry（新增工具即可）。
+
+## D41 · Course Architect Agent：GitHub 仓库 → 可审核课程蓝图
+
+**日期**：2026-10-11。
+
+**架构**（`backend/app/domains/course_generation/`）：
+- **流水线**（后台线程，状态落库可轮询）：`pending→fetching→analyzing→scoping→generating→validating→draft→(publish)published`；失败记录 stage+原因，可重试；进度百分比随阶段单调推进；
+- **GitHub Adapter**：公开仓库只读导入——URL 解析（正则白名单）/元数据/默认分支 **commit SHA 锚定**（结果可复现）/递归树/文本文件内容（raw 优先 + API contents base64 兜底）；限额：树条目、单文件 512KB、快照总量 3MB、深度 12；二进制/`.git`/node_modules 过滤；**LICENSE 不明确 → needs_review 人工审查**，绝不自动认定可再发布；403/429 → 明确"速率限制"；
+- **Repository Analyzer Agent**：复用 P6 Runtime + **绑定快照的 7 个 architect 工具**（元数据/树/读文件/代码搜索/依赖/测试/许可证——路径必须在快照内，无"换仓库"参数）；分层分析（树→入口→按需读码）防一次性塞满上下文；结论三级标注 **confirmed/inferred/unknown + 来源路径行号**；仓库内容全部声明为不可信数据（防提示注入）；
+- **Scoper+Generator**：Rebuild Track（从零重建核心行为，非逐行复刻）；现有知识图谱优先、图谱外知识一律候选概念（不污染全局）；证据路径白名单来自快照；
+- **确定性 Validator**（普通 Python，LLM 不参与判定）：ID 唯一/依赖存在/DAG 无环/每任务有交付/里程碑验收/概念引用合法（已有∪候选）/证据路径回溯快照/**testStrategy 禁止"已通过"断言**/里程碑≥4 任务≥8/存在可独立开始任务/LICENSE 需审查为 warning；error 阻断发布；不合法 → 携带错误 ≤2 修复轮（每轮无工具单次 LLM）；修复轮失败保留最后有效验证如实标 failed；
+- **发布**（draft→published）：验证通过才允许；转换 curriculum 任务规格持久化（testFiles/starterFiles 如实为空——P7.1 未生成可执行教学代码，**不标记为已验证可运行课程**）；
+- **API**：POST/GET/{id}/analysis/blueprint/validate/retry/publish（Pydantic 契约）。
+
+**P6 稳定性修复（先行）**：结构化截断（递归截长串/大数组，tool 消息永远合法 JSON——原字符串截断会损坏 JSON）；**多 Agent 注册表**（tutor/architect 实例隔离，同名异处理器拒绝，幂等注册）；工具执行超时守护与异常记录；DeepSeek `max_tokens=8192`（蓝图 JSON 超默认 4k 被截断）。
+
+**验证**：后端 261 全过（新增 25：URL 合法/非法/404/限流/超限/二进制过滤/SHA 固定/许可证审查/注入防护/全流水线 Mock/发布幂等/验证器 11 项）；**真实 E2E**（micrograd + 真实 DeepSeek + 真实 GitHub API）；前端 274 全过（新增 3：生成页交互/失败重试/非法 URL）。身份说明：owner 仍为 dev-user 占位（开发环境单用户；生产多用户隔离属 P8 认证阶段）。

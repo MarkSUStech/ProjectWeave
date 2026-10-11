@@ -61,6 +61,7 @@
   - `router.py`：`POST /tutor/turns`（含 requestAnswerLevel）、`GET /tutor/suggestions`（拉取式主动建议）、`GET /tutor/decisions`；决策追加 `tutor-turn` 事件（payload 含 trigger/answerRequested）。决策可携带 **workspace_actions**（Gate 分级 A0/A1/A2 + payload 校验 + H4 联动，D28）。
 - **工作台动作执行（前端，P3.4/D28）**：`lib/workspace/executor.ts` 确定性执行链（A0 通知 / A1 布局切换×锁定联防+撤销栈 / A2 确认队列→草稿）；`stores/workspaceStore.ts`（通知/撤销栈/待确认补丁）；`WorkspaceNoticeStrip` 自包含通知条组件（挂载点待并行前端合入，D28）；每动作上报 `workspace-action` 审计事件。
 - **领域模块** `app/domains/settings/`（P2.6）：`user_settings`（owner 主键、interventionMode quiet/adaptive/guided，默认 adaptive）；`GET/PATCH /api/v1/settings`。
+- **领域模块** `app/domains/course_generation/`（P7.1，D41）：GitHub 公开仓库 → 可审核课程蓝图。流水线（后台线程状态落库：fetching→analyzing→generating→validating→draft→published）；`sources/github_adapter.py`（SHA 锚定/限额/二进制过滤/LICENSE 人工审查）；`analysis/repository_analyzer.py`（architect 工具集绑定快照 + P6 Runtime，结论 confirmed/inferred/unknown 分级带证据）；`generation/blueprint_generator.py`（Rebuild Track 蓝图 + ≤2 修复轮）；`validation/blueprint_validator.py`（确定性 11 项校验：DAG/证据回溯/测试声明/结构底线；error 阻断发布）。API：POST/GET /course-generations 及 /analysis /blueprint /validate /retry /publish。
 - **领域模块** `app/domains/debugging/`（P4.5a，交互式调试，D36/D37）：
   - `models.py`：`debug_sessions` 表（状态机 creating→building→configuring→running⇄paused→terminated + end_reason；文件快照/断点/快照[位置/线程/栈帧/作用域变量]/构建诊断/DAP 日志；空闲与硬超时时间戳）。
   - `dap_client.py`：DAP 客户端（Content-Length 帧；响应按 request_seq 唤醒；事件回调非阻塞——读线程只入队）。
@@ -123,6 +124,11 @@
 | GET | /api/v1/debug-sessions/{id}/variables?variablesReference= | 变量懒加载（复杂对象展开） |
 | DELETE | /api/v1/debug-sessions/{id} | 停止调试并回收容器（幂等） |
 | GET | /api/v1/debug-sessions/{id}/frames/{frameId}/variables | 指定栈帧的作用域变量与指针图（含 pauseSeq，缓存按代次隔离） |
+| POST | /api/v1/course-generations | 创建 GitHub 课程生成任务（202；后台流水线） |
+| GET | /api/v1/course-generations/{id} | 生成状态/进度/失败信息（轮询） |
+| GET | /api/v1/course-generations/{id}/analysis | 仓库分析结果与证据分级 |
+| GET | /api/v1/course-generations/{id}/blueprint | 完整课程蓝图与确定性验证结果 |
+| POST | /api/v1/course-generations/{id}/validate · /retry · /publish | 重验 / 重试 / 发布草稿 |
 | （前端上报） | workspace-action 事件 | 工作台动作执行结果审计（executed/rejected/needs-confirmation/confirmed/undone） |
 
 OpenAPI 文档：启动后访问 `http://localhost:8000/docs`。

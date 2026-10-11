@@ -395,3 +395,94 @@ def test_tutor_backward_compat_non_tool_provider(agent_client: TestClient, monke
     assert decision["message"] == "旧路径"
     assert decision["toolCalls"] == [] and decision["agentRounds"] == 0
     assert len(provider.calls) == 1
+
+
+# ---------------------------------------------------------------- P7 稳定性修复回归
+
+
+def test_structured_truncate_keeps_valid_json():
+    """结构化截断：超限结果的 tool 消息仍是合法 JSON（P6 字符串截断会损坏）。"""
+    import json as _json
+
+    from app.agents.registry import structured_truncate
+
+    big = {"files": [{"path": f"src/mod{i}/very_long_name.cpp",
+                      "content": "x" * 5000} for i in range(50)]}
+    out = structured_truncate(big, 200)
+    dumped = _json.dumps(out, ensure_ascii=False)  # 必须可序列化
+    assert len(dumped) < len(_json.dumps(big))
+    assert "截断" in dumped or "截断" in dumped  # ensure_ascii 转义后按转义形式断言
+
+    # registry.execute_tool 路径：超限结果 summary 是合法 JSON
+    from app.agents.registry import ToolRegistry, execute_tool
+    from app.agents.schemas import ToolSpec
+
+    reg = ToolRegistry("test-trunc")
+    reg.register(ToolSpec(
+        name="big_list", description="d",
+        parameters={"type": "object", "properties": {}, "required": []},
+        handler=lambda ctx: {"items": ["x" * 4000] * 100},
+        max_result_chars=1000,
+    ))
+    record = execute_tool(reg.get("big_list"), ToolContext(db=None, project_id="00000000-0000-4000-8000-0000000000aa"), {}, 1)
+    assert record.ok
+    _json.loads(record.summary)  # 不抛 = 合法 JSON
+
+
+def test_agent_registries_isolated():
+    """Agent 级白名单：Tutor 工具在 architect 注册表中不可见，反之亦然。"""
+    from app.agents.registry import architect_registry, tutor_registry
+    from app.agents.schemas import ToolSpec
+
+    tutor_names = set(tutor_registry.names())
+    arch_names = set(architect_registry.names())
+    assert "read_project_file" in tutor_names
+    # 尚未注册 architect 工具时为空（后续 course_generation 会注册）
+    # 关键：tutor 工具不在 architect 白名单
+    assert not (tutor_names & arch_names)
+
+    # architect 注册一个工具后，tutor 看不到
+    architect_registry.register(ToolSpec(
+        name="get_repository_metadata", description="d",
+        parameters={"type": "object", "properties": {}, "required": []},
+        handler=lambda ctx: {"ok": True},
+    ))
+    assert "get_repository_metadata" in architect_registry.names()
+    assert "get_repository_metadata" not in tutor_registry.names()
+    import pytest as _pytest
+    from app.agents.registry import UnknownToolError
+    with _pytest.raises(UnknownToolError):
+        tutor_registry.get("get_repository_metadata")
+
+
+def test_idempotent_registration():
+    from app.agents.registry import ToolRegistry
+    from app.agents.schemas import ToolSpec
+
+    reg = ToolRegistry("t")
+    spec = ToolSpec(name="x", description="d",
+                    parameters={"type": "object", "properties": {}, "required": []},
+                    handler=lambda ctx: {})
+    reg.register(spec)
+    reg.register(spec)  # 幂等
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        reg.register(ToolSpec(name="x", description="d",
+                              parameters={"type": "object", "properties": {}, "required": []},
+                              handler=lambda ctx: 1))  # 同名异处理器 → 拒绝
+
+
+def test_tool_timeout_and_error_recorded():
+    """工具抛异常/超时 → 错误记录，不崩循环。"""
+    from app.agents.registry import ToolRegistry, execute_tool
+    from app.agents.schemas import ToolSpec
+
+    reg = ToolRegistry("t")
+    reg.register(ToolSpec(
+        name="boom", description="d",
+        parameters={"type": "object", "properties": {}, "required": []},
+        handler=lambda ctx: (_ for _ in ()).throw(RuntimeError("db exploded")),
+    ))
+    record = execute_tool(reg.get("boom"), ToolContext(db=None, project_id="00000000-0000-4000-8000-0000000000aa"), {}, 1)
+    assert record.ok is False and "db exploded" in record.error
+    assert record.duration_ms >= 0

@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-11（P6 AI Teaching Agent，D40）
+更新时间：2026-10-11（P7.1 Course Architect Agent，D41）
 
 ## 已完成（经过验证）
 
@@ -513,3 +513,23 @@
       A2 门控/轨迹/降级兼容）；**真实 DeepSeek E2E** 通过（Agent 主动
       取诊断+读文件，回复引用真实行号与真实错误，H1 先预测提示）；
       前端 **271 全过** + typecheck/build
+
+### P7.1 Course Architect Agent + P6 稳定性（D41）
+
+- [x] **P6 修复（先行）**：结构化截断（工具结果永远合法 JSON）；多 Agent
+      注册表（tutor/architect 实例隔离 + 幂等）；执行超时/异常记录；
+      DeepSeek max_tokens（长蓝图不再截断）
+- [x] **course_generation 域**：GitHub Adapter（SHA 锚定/限额/二进制
+      过滤/LICENSE 人工审查/raw+API 双通道）；Repository Analyzer Agent
+      （7 个绑定快照的 architect 工具 + P6 Runtime + confirmed/inferred/
+      unknown 证据分级 + 分层分析）；Scoper+Generator（Rebuild Track +
+      知识图谱优先 + 候选概念不污染）；确定性 Validator（11 项：DAG/
+      证据回溯/测试声明/结构底线…；error 阻断发布 + ≤2 修复轮）；
+      发布（draft→published，不标记为已验证可运行课程）
+- [x] **后台流水线 + API**：状态落库可轮询（进度/阶段/错误/中间产物）；
+      6 端点（create/get/analysis/blueprint/validate/retry/publish）
+- [x] **前端**：/courses/new 生成页（URL 输入/进度条/分析摘要含证据
+      分级徽标/里程碑/任务列表点击详情/来源证据/验证问题/发布按钮）；
+      全部数据来自真实后端记录
+- [x] 验证：后端 **261 全过**（+25 课程生成专项）；前端 **274 全过**
+  （+3 页面交互）；真实 E2E（micrograd + DeepSeek + GitHub）见交付报告

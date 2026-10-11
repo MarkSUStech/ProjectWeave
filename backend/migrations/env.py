@@ -16,6 +16,7 @@ from app.domains.curriculum.models import LearningPlan, ProjectTask  # noqa: F40
 from app.domains.events.models import LearningEvent  # noqa: F401
 from app.domains.executions.models import ExecutionSession  # noqa: F401
 from app.domains.debugging.models import DebugSession  # noqa: F401
+from app.domains.course_generation.models import CourseGeneration  # noqa: F401
 from app.domains.learner.models import (  # noqa: F401
     LearningEvidence,
     LearnerMastery,

@@ -12,7 +12,8 @@ import json
 
 from app.agents import policy
 from app.agents.context import FORCE_FINAL_MESSAGE
-from app.agents.registry import UnknownToolError, execute_tool, registry
+from app.agents.registry import UnknownToolError, execute_tool
+from app.agents.registry import tutor_registry
 from app.agents.schemas import (
     AgentBudget,
     AgentError,
@@ -28,9 +29,11 @@ def run_agent(
     messages: list[dict],
     ctx: ToolContext,
     budget: AgentBudget | None = None,
+    registry=None,
 ) -> AgentRunResult:
-    """执行 Agent 循环。provider 需实现 chat_with_tools（能力检测由调用方做）。"""
+    """执行 Agent 循环。registry 指定该 Agent 的工具白名单（默认 Tutor）。"""
     budget = budget or AgentBudget()
+    registry = registry or tutor_registry
     records: list[ToolCallRecord] = []
     rounds = 0
     prompt_tokens = 0

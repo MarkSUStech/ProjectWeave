@@ -9,6 +9,7 @@ import { Spinner } from './components/ui/Feedback'
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'))
 const IdePage = lazy(() => import('./pages/IdePage'))
+const CourseGeneratePage = lazy(() => import('./pages/CourseGeneratePage'))
 const ConceptsPage = lazy(() => import('./pages/ConceptsPage'))
 const AssessmentPage = lazy(() => import('./pages/AssessmentPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
@@ -23,6 +24,7 @@ export default function App() {
     <Route path="/projects/:id/ide" element={<IdePage />} />
     <Route path="/projects/:id/assessment" element={<AssessmentPage />} />
     <Route path="/concepts" element={<ConceptsPage />} />
+    <Route path="/courses/new" element={<CourseGeneratePage />} />
     <Route path="*" element={<NotFoundPage />} />
   </Routes></Suspense>
   return (

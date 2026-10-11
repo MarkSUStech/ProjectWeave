@@ -66,7 +66,8 @@
 | 5.1 | 多语言课程适配（版本化模板）+ C++ 指针课程（知识图/诊断/3 任务/Tutor hints）| 4.5b.1 | ✅（D39） |
 | 5.2 | 第一轮学生试用反馈迭代 + Python 课程制作 | 5.1 | ⏳ 计划 |
 | 6 | AI Teaching Agent（工具调用循环 + 只读工具 + 轨迹） | 5.1 | ✅（D40） |
-| 6.1 | Course Architect Agent（GitHub 课程生成，复用 Runtime/Registry） | 6 | ⏳ 计划 |
+| 7.1 | Course Architect Agent（GitHub→课程蓝图，P6 稳定性修复） | 6 | ✅（D41） |
+| 7.2 | 蓝图→项目实例化（starter 代码/隐藏测试生成） | 7.1 | ⏳ 计划 |
 
 ## P4 打磨与试点 —— 完整用户旅程与学习效果测量
 

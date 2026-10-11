@@ -93,3 +93,52 @@ class AgentRunResult:
 
 class AgentError(Exception):
     """Agent 运行失败（预算耗尽且无法产出最终决策等）。"""
+
+
+def extract_json_object(text: str) -> dict:
+    """从模型输出中提取首个完整 JSON 对象（容忍前导文字/markdown 围栏）。
+
+    失败抛 ValueError——调用方决定降级或修复轮。
+    """
+    import json as _json
+
+    if not text or not text.strip():
+        raise ValueError("模型输出为空")
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        # 剥离围栏
+        stripped = stripped.strip("`")
+        if stripped.lower().startswith("json"):
+            stripped = stripped[4:]
+        stripped = stripped.strip()
+    try:
+        return _json.loads(stripped)
+    except _json.JSONDecodeError:
+        pass
+    # 找最外层花括号对（首个 { 到与之匹配的 }）
+    start = stripped.find("{")
+    if start < 0:
+        raise ValueError("输出中没有 JSON 对象")
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(stripped)):
+        ch = stripped[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return _json.loads(stripped[start : i + 1])
+    raise ValueError("JSON 对象未闭合（输出被截断）")
