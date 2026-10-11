@@ -197,3 +197,87 @@ export async function publishCourseGeneration(id: string): Promise<{
 export async function retryCourseGeneration(id: string): Promise<CourseGeneration> {
   return generationSchema.parse(await api.post<unknown>(`/course-generations/${id}/retry`))
 }
+
+
+// ---------------------------------------------------------------- P7.2 课程内容/发布
+
+export const artifactSchema = z.object({
+  taskId: z.string(),
+  milestoneId: z.string(),
+  language: z.string(),
+  instructions: z.object({
+    title: z.string(),
+    context: z.string().default(''),
+    goal: z.string().default(''),
+    requiredConcepts: z.array(z.string()).default([]),
+    features: z.array(z.string()).default([]),
+    expectedFiles: z.array(z.string()).default([]),
+    ioBehavior: z.string().default(''),
+    constraints: z.array(z.string()).default([]),
+    acceptance: z.array(z.string()).default([]),
+    relationToPrev: z.string().default(''),
+    relationToNext: z.string().default(''),
+  }),
+  starterFiles: z.array(z.object({ path: z.string(), content: z.string() })).default([]),
+  testFiles: z.array(z.object({ path: z.string(), content: z.string() })).default([]),
+  hints: z.array(z.object({ level: z.number().int(), text: z.string() })).default([]),
+  status: z.string(),
+  verifications: z.array(z.object({
+    kind: z.string(), status: z.string(),
+    exitCode: z.number().int().nullable().default(null),
+    total: z.number().int().default(0), passed: z.number().int().default(0),
+    failed: z.number().int().default(0),
+    diagnostics: z.array(z.record(z.string(), z.unknown())).default([]),
+    stderrTail: z.string().default(''),
+    durationMs: z.number().int().default(0),
+  })).default([]),
+  repairs: z.array(z.object({
+    round: z.number().int(), problem: z.string(),
+    changedFiles: z.array(z.string()).default([]), outcome: z.string(),
+  })).default([]),
+  error: z.string().nullable().default(null),
+})
+
+export const releaseSchema = z.object({
+  id: z.string().uuid(),
+  generationId: z.string().uuid(),
+  releaseVersion: z.number().int(),
+  status: z.enum(['generating', 'verifying', 'ready', 'failed']),
+  language: z.string(),
+  totalTasks: z.number().int().default(0),
+  passedTasks: z.number().int().default(0),
+  failedTasks: z.number().int().default(0),
+  progress: z.number().int().default(0),
+  currentTask: z.string().nullable().default(null),
+  error: z.string().nullable().default(null),
+  courseTitle: z.string().default(''),
+  readyAt: z.string().nullable().default(null),
+  createdAt: z.string(),
+})
+
+export const releaseDetailSchema = releaseSchema.extend({
+  artifacts: z.array(artifactSchema).default([]),
+})
+
+export type CourseRelease = z.infer<typeof releaseSchema>
+export type ReleaseDetail = z.infer<typeof releaseDetailSchema>
+export type LessonArtifact = z.infer<typeof artifactSchema>
+
+export async function buildLessons(generationId: string): Promise<CourseRelease> {
+  return releaseSchema.parse(await api.post<unknown>(
+    `/course-generations/${generationId}/build-lessons`))
+}
+
+export async function getRelease(id: string): Promise<ReleaseDetail> {
+  return releaseDetailSchema.parse(await api.get<unknown>(`/course-releases/${id}`))
+}
+
+export async function instantiateRelease(
+  id: string, title?: string,
+): Promise<{ projectId: string; firstTaskId: string | null }> {
+  const data = await api.post<unknown>(`/course-releases/${id}/instantiate`,
+    title ? { projectTitle: title } : undefined)
+  return z.object({
+    projectId: z.string().uuid(), firstTaskId: z.string().nullable(),
+  }).parse(data)
+}

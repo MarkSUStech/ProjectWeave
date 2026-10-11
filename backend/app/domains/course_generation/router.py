@@ -7,6 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.domains.course_generation import service
+from app.domains.course_generation.lessons import lesson_publisher
+from app.domains.course_generation.lessons.schemas import (
+    ArtifactPublicRead,
+    InstantiateRequest,
+    InstantiateResponse,
+    ReleaseDetailRead,
+    ReleaseRead,
+)
 from app.domains.course_generation.schemas import (
     GenerationAnalysisRead,
     GenerationBlueprintRead,
@@ -119,3 +127,76 @@ def publish(gen_id: str, db: Session = Depends(get_db)) -> GenerationPublishRead
         task_count=len(row.published_tasks or []),
         milestone_count=len({t["milestone"] for t in (row.published_tasks or [])}),
     )
+
+
+# ---------------------------------------------------------------- P7.2 课程内容/发布/实例化
+
+
+def _release_read(row) -> ReleaseRead:
+    artifacts = row.artifacts or []
+    passed = sum(1 for a in artifacts if a.get("status") == "tests-passed")
+    failed = sum(1 for a in artifacts if a.get("status") in ("failed", "unsupported"))
+    return ReleaseRead(
+        id=row.id, generation_id=row.generation_id,
+        release_version=row.release_version, status=row.status,
+        language=row.language, total_tasks=len(artifacts),
+        passed_tasks=passed, failed_tasks=failed,
+        progress=row.progress, current_task=row.current_task,
+        error=row.error, course_title=row.course_title,
+        ready_at=row.ready_at, created_at=row.created_at,
+    )
+
+
+@router.post("/{gen_id}/build-lessons", response_model=ReleaseRead, status_code=202)
+def build_lessons(gen_id: str, db: Session = Depends(get_db)) -> ReleaseRead:
+    try:
+        row = lesson_publisher.build_lessons(db, _parse_id(gen_id))
+    except lesson_publisher.ReleaseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    return _release_read(row)
+
+
+@router.get("/{gen_id}/releases", response_model=list[ReleaseRead])
+def list_releases(gen_id: str, db: Session = Depends(get_db)) -> list[ReleaseRead]:
+    try:
+        return [_release_read(r) for r in lesson_publisher.list_releases(db, _parse_id(gen_id))]
+    except lesson_publisher.ReleaseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
+
+@router.get("/{gen_id}/lessons", response_model=ReleaseDetailRead)
+def get_lessons(gen_id: str, db: Session = Depends(get_db)) -> ReleaseDetailRead:
+    releases = lesson_publisher.list_releases(db, _parse_id(gen_id))
+    if not releases:
+        raise HTTPException(status_code=404, detail="尚无课程内容（先 build-lessons）")
+    row = releases[0]
+    base = _release_read(row)
+    return ReleaseDetailRead(**base.model_dump(),
+                             artifacts=[ArtifactPublicRead.model_validate(a) for a in (row.artifacts or [])])
+
+
+releases_router = APIRouter(prefix="/course-releases", tags=["course-generation"])
+
+
+@releases_router.get("/{release_id}", response_model=ReleaseDetailRead)
+def get_release(release_id: str, db: Session = Depends(get_db)) -> ReleaseDetailRead:
+    try:
+        row = lesson_publisher.get_release(db, _parse_id(release_id))
+    except lesson_publisher.ReleaseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    base = _release_read(row)
+    return ReleaseDetailRead(**base.model_dump(),
+                             artifacts=[ArtifactPublicRead.model_validate(a) for a in (row.artifacts or [])])
+
+
+@releases_router.post("/{release_id}/instantiate", response_model=InstantiateResponse, status_code=201)
+def instantiate(release_id: str, payload: InstantiateRequest | None = None,
+                db: Session = Depends(get_db)) -> InstantiateResponse:
+    try:
+        result = lesson_publisher.instantiate_project(
+            db, _parse_id(release_id),
+            title=(payload.project_title if payload else None),
+        )
+    except lesson_publisher.ReleaseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    return InstantiateResponse(**result)

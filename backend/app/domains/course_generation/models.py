@@ -8,7 +8,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Uuid, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -71,6 +71,41 @@ class CourseGeneration(Base):
     # 发布时转换的任务规格（供 P7.2 项目实例化使用）
     published_tasks: Mapped[list | None] = mapped_column(JSONType, nullable=True)
 
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class CourseRelease(Base):
+    """已验证课程的不可变版本（P7.2，D42）。
+
+    一个 Blueprint（generation）可多次生成课程内容产生不同 release；
+    release ready 后冻结。参考实现存在受保护列，普通 API 永不下发。
+    """
+
+    __tablename__ = "course_releases"
+    __table_args__ = (Index("ix_course_releases_gen", "generation_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    generation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("course_generations.id", ondelete="CASCADE"), index=True
+    )
+    owner_id: Mapped[str] = mapped_column(String(64), default="dev-user")
+    release_version: Mapped[int] = mapped_column(default=1)
+    status: Mapped[str] = mapped_column(String(20), default="generating", index=True)
+    language: Mapped[str] = mapped_column(String(20), default="python")
+    course_title: Mapped[str] = mapped_column(String(300), default="")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    current_task: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    blueprint_snapshot: Mapped[dict] = mapped_column(JSONType, default=dict)
+    artifacts: Mapped[list] = mapped_column(JSONType, default=list)
+    reference_store: Mapped[dict] = mapped_column(JSONType, default=dict)
+    verification_report: Mapped[dict] = mapped_column(JSONType, default=dict)
+
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow

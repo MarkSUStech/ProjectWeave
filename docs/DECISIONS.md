@@ -586,3 +586,20 @@
 **P6 稳定性修复（先行）**：结构化截断（递归截长串/大数组，tool 消息永远合法 JSON——原字符串截断会损坏 JSON）；**多 Agent 注册表**（tutor/architect 实例隔离，同名异处理器拒绝，幂等注册）；工具执行超时守护与异常记录；DeepSeek `max_tokens=8192`（蓝图 JSON 超默认 4k 被截断）。
 
 **验证**：后端 261 全过（新增 25：URL 合法/非法/404/限流/超限/二进制过滤/SHA 固定/许可证审查/注入防护/全流水线 Mock/发布幂等/验证器 11 项）；**真实 E2E**（micrograd + 真实 DeepSeek + 真实 GitHub API）；前端 274 全过（新增 3：生成页交互/失败重试/非法 URL）。身份说明：owner 仍为 dev-user 占位（开发环境单用户；生产多用户隔离属 P8 认证阶段）。
+
+## D42 · 可执行课程生成：Lesson Builder + 真实沙箱 Course Verifier + CourseRelease
+
+**日期**：2026-10-11。
+
+**架构**（`course_generation/lessons/` + `course_generation/verification/`）：
+- **Lesson Builder**（`lesson_builder.py`）：复用 P6 Runtime 架构；每任务一次 LLM 调用产出全部四类材料（instructions/starter/tests/reference/hints），上下文含**前一任务参考实现**（累积工程基础——阶段连续性的核心机制）+ 原仓库证据；修复轮接收真实沙箱 stdout/stderr（不只断言消息）；`make_lesson_tools` 提供 architect 课程内容工具集（蓝图/任务规格/执行环境/原仓库文件——绑定生成任务，无切换参数）。
+- **Course Verifier**（`course_verifier.py`）：真实 Docker 沙箱执行（直接复用 PythonRunner + DockerSandboxManager，零新建执行设施）；test 模式注入根级 conftest 使包导入可用；**防伪守卫**（确定性）：starter 含 TODO、不含参考实现全文（>200 字节代码体完全一致=泄露）、测试有断言与 pytest 函数、无 `assert True` 空转；`merge_files` 累积合并实现文件级连续性。
+- **流水线**（`lesson_publisher.py`）：DAG 顺序逐任务：生成 → 守卫 → 真实沙箱验证参考实现（本任务测试）→ **starter 期望失败验证**（starter 全过=测试未覆盖待实现逻辑=疑似泄露/空转 → 失败）→ ≤3 修复轮（真实错误反馈）→ 参考快照累积传递 → 全部通过后**最终集成验证**（全部任务测试在最终参考快照上一次通过）→ ready。
+- **CourseRelease**：版本化不可变（generation → 多 release）；蓝图快照冻结（camelCase 规范化——兼容 LLM 驼峰与 model_dump 蛇形）；`reference_store` 受保护列——**普通 API schema 不含该字段**，材料下发剥离 reference；重启恢复（卡在 generating/verifying 的标 failed 可重试）。
+- **instantiate**：ready release → 学习项目（种子首任务 starter+tests、全部任务入 ProjectTask 图含 hints、绑定 `course-release:{id}` 模板标记）；不复用默认模板种子（Python 项目获得课程任务而非空模板）。
+- **API**：POST /{gen}/build-lessons（202）、GET /{gen}/releases、GET /{gen}/lessons、GET /course-releases/{id}、POST /course-releases/{id}/instantiate。
+- **前端**：生成页增加课程内容阶段（进度/当前任务/通过数/失败原因/修复轮次）+ "开始学习"（instantiate → IDE）。
+
+**核心不变式**：LLM 只生成；测试通过与否只由真实沙箱执行判定（标记五级 generated→schema-valid→build-valid→tests-passed / failed / unsupported 不混用）；参考实现服务端隔离；starter 期望失败是测试有效性的证据；练习信任级不越权。
+
+**验证**：后端 268 全过（+7 课程内容专项：防伪守卫四类违规/累积合并/真实沙箱参考通过/坏参考失败带诊断/starter 期望失败/流水线全绿含隔离与实例化/重启恢复）；前端 274 全过；**真实全链 E2E**（GitHub+DeepSeek+Docker）：蓝图→逐任务材料生成→真实沙箱验证→发布→实例化→学生项目首任务测试可运行。

@@ -1,0 +1,496 @@
+"""课程内容生产/发布/实例化服务（P7.2，D42）。
+
+流水线（后台线程，release 行持久化进度）：
+按任务 DAG 顺序逐任务：LLM 生成材料 → 防伪守卫 → 真实沙箱验证参考实现
+（本任务测试 + 回归测试）→ 失败进入 ≤2 修复轮 → 通过则参考快照累积传递
+给下一任务 → 全部通过后跑最终集成验证 → ready。
+instantiate：从 ready release 创建学生项目（种子首任务 starter + 全部任务）。
+"""
+
+from __future__ import annotations
+
+import threading
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.agents.schemas import extract_json_object  # noqa: F401
+from app.domains.course_generation.lessons import lesson_builder
+from app.domains.course_generation.lessons.schemas import LessonArtifact
+from app.domains.course_generation.models import CourseGeneration, CourseRelease
+from app.domains.course_generation.validation.blueprint_validator import _has_cycle
+from app.domains.course_generation.verification.course_verifier import (
+    guard_starter,
+    merge_files,
+    run_in_sandbox,
+)
+
+MAX_REPAIR_PER_TASK = 3
+
+
+class ReleaseError(Exception):
+    def __init__(self, message: str, status: int = 422) -> None:
+        self.status = status
+        super().__init__(message)
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# 注入点（测试）
+_session_factory = None
+_provider_factory = None
+
+
+def set_session_factory(factory) -> None:
+    global _session_factory
+    _session_factory = factory
+
+
+def set_provider_factory(factory) -> None:
+    global _provider_factory
+    _provider_factory = factory
+
+
+def _session():
+    if _session_factory is not None:
+        return _session_factory()
+    from app.core.db import SessionLocal
+
+    return SessionLocal()
+
+
+def _provider():
+    if _provider_factory is not None:
+        return _provider_factory()
+    from app.ai.provider import get_provider
+
+    return get_provider()
+
+
+# ---------------------------------------------------------------- 创建/查询
+
+
+def build_lessons(db: Session, generation_id) -> CourseRelease:
+    gen = db.get(CourseGeneration, _uuid(generation_id))
+    if gen is None:
+        raise ReleaseError("生成任务不存在", 404)
+    if gen.blueprint is None or gen.status not in ("published", "draft"):
+        raise ReleaseError("蓝图未就绪（需先完成蓝图生成与验证）")
+    version = 1 + len(list(db.scalars(
+        select(CourseRelease.id).where(CourseRelease.generation_id == gen.id)
+    )))
+    release = CourseRelease(
+        generation_id=gen.id,
+        release_version=version,
+        status="generating",
+        language=lesson_builder.detect_language(gen.blueprint),
+        course_title=(gen.blueprint.get("project") or {}).get("title", ""),
+        blueprint_snapshot=gen.blueprint,
+    )
+    db.add(release)
+    db.commit()
+    db.refresh(release)
+    threading.Thread(target=_run_build, args=(release.id,), daemon=True,
+                     name=f"pw-lessons-{release.id.hex[:8]}").start()
+    return release
+
+
+def get_release(db: Session, release_id) -> CourseRelease:
+    row = db.get(CourseRelease, _uuid(release_id))
+    if row is None:
+        raise ReleaseError("课程版本不存在", 404)
+    return row
+
+
+def list_releases(db: Session, generation_id) -> list[CourseRelease]:
+    return list(db.scalars(
+        select(CourseRelease)
+        .where(CourseRelease.generation_id == _uuid(generation_id))
+        .order_by(CourseRelease.release_version.desc())
+    ))
+
+
+def recover_stale_releases(db: Session) -> int:
+    """服务重启恢复：卡在 generating/verifying 的 release 标记失败（可重试）。"""
+    stale = list(db.scalars(select(CourseRelease).where(
+        CourseRelease.status.in_(("generating", "verifying"))
+    )))
+    for row in stale:
+        row.status = "failed"
+        row.error = "服务重启中断（可重新生成课程内容产生新版本）"
+    db.commit()
+    return len(stale)
+
+
+def instantiate_project(db: Session, release_id, title: str | None = None) -> dict:
+    """从 ready release 创建学生项目：首任务 starter + 全部任务种子。"""
+    release = get_release(db, release_id)
+    if release.status != "ready":
+        raise ReleaseError("课程未就绪（lessons 未全部验证通过）")
+
+    from app.domains.projects.models import Project, ProjectFile
+    from app.domains.curriculum.models import ProjectTask
+
+    blueprint = _normalize_blueprint(release.blueprint_snapshot or {})
+    course_title = title or release.course_title or "课程项目"
+    project = Project(
+        owner_id="dev-user",
+        title=course_title,
+        description=(blueprint.get("project") or {}).get("description", ""),
+        mode="rebuild",
+        complexity="medium",
+        target_features=(blueprint.get("project") or {}).get("goals") or [],
+        non_goals=(blueprint.get("project") or {}).get("nonGoals") or [],
+        stack=[release.language.capitalize()],
+        acceptance_criteria=(blueprint.get("project") or {}).get("evidence") and [] or [],
+        # 课程项目绑定确定 release 版本
+        template_id=f"course-release:{release.id}",
+    )
+    db.add(project)
+    db.flush()
+
+    artifacts = release.artifacts or []
+    by_task = {a.get("taskId") or a.get("task_id"): a for a in artifacts}
+    order = _task_order(blueprint)
+    first = next((a for a in order if a["taskId"] in by_task), None)
+
+    # 种子文件：README + 首任务 starter + 首任务测试
+    files: dict[str, str] = {
+        "README.md": (
+            f"# {course_title}\n\n"
+            f"本项目由 ProjectWeave 课程自动创建（release v{release.release_version}）。\n"
+            f"按「任务」面板逐步完成；每个任务有初始代码与可运行测试。\n"
+        ),
+    }
+    if first:
+        first_artifact = by_task.get(first["taskId"]) or {}
+        for f in first_artifact.get("starterFiles") or first_artifact.get("starter_files") or []:
+            files[f["path"]] = f["content"]
+        for f in first_artifact.get("testFiles") or first_artifact.get("test_files") or []:
+            files.setdefault(f["path"], f["content"])
+    for path, content in files.items():
+        db.add(ProjectFile(project_id=project.id, path=path, content=content))
+
+    # 种子任务（全部任务入图；测试文件路径绑定）
+    ms_order = {m["milestoneId"]: i + 1 for i, m in enumerate(blueprint.get("milestones") or [])}
+    for spec in order:
+        artifact = by_task.get(spec["taskId"])
+        db.add(ProjectTask(
+            project_id=project.id,
+            task_id=spec["taskId"],
+            milestone=ms_order.get(spec.get("milestoneId"), 1),
+            title=spec.get("title", ""),
+            description=_task_description(artifact, spec),
+            depends_on=spec.get("dependsOn") or [],
+            required_concepts=spec.get("requiredConcepts") or [],
+            deliverable="; ".join(spec.get("deliverables") or [])[:400],
+            test_files=[f["path"] for f in (artifact or {}).get("testFiles") or (artifact or {}).get("test_files") or []],
+            starter_files=[f["path"] for f in (artifact or {}).get("starterFiles") or (artifact or {}).get("starter_files") or []],
+            acceptance_criteria=spec.get("acceptanceCriteria") or [],
+            hints=(artifact or {}).get("hints") or [],
+            viz_suggestion="",
+        ))
+    db.commit()
+    db.refresh(project)
+    return {"project_id": project.id, "first_task_id": first["taskId"] if first else None}
+
+
+# ---------------------------------------------------------------- 构建流水线
+
+
+def _uuid(value) -> uuid.UUID:
+    return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+
+
+def _normalize_blueprint(data: dict) -> dict:
+    """蓝图统一为 camelCase dict（快照可能来自 model_dump 蛇形或 LLM 驼峰）。"""
+    from app.domains.course_generation.schemas import CourseBlueprint
+
+    return CourseBlueprint.model_validate(data).model_dump(mode="json", by_alias=True)
+
+
+def _task_order(blueprint: dict) -> list[dict]:
+    tasks = blueprint.get("tasks") or []
+    graph = {t["taskId"]: list(t.get("dependsOn") or []) for t in tasks}
+    if _has_cycle(graph):
+        raise ReleaseError("任务依赖有环，无法排序")
+    ordered, seen = [], set()
+
+    def visit(tid):
+        if tid in seen:
+            return
+        seen.add(tid)
+        for dep in graph.get(tid, []):
+            visit(dep)
+        ordered.append(tid)
+
+    for t in tasks:
+        visit(t["taskId"])
+    by_id = {t["taskId"]: t for t in tasks}
+    return [by_id[tid] for tid in ordered]
+
+
+def _update(release_id, **fields) -> None:
+    try:
+        with _session() as db:
+            row = db.get(CourseRelease, release_id)
+            if row is None:
+                return
+            for key, value in fields.items():
+                setattr(row, key, value)
+            db.commit()
+    except Exception:
+        pass
+
+
+def _run_build(release_id: uuid.UUID) -> None:
+    try:
+        _run_build_inner(release_id)
+    except Exception as exc:
+        _update(release_id, status="failed", error=f"课程内容生产内部错误：{exc}")
+
+
+def _artifact_public(artifact: LessonArtifact) -> dict:
+    data = artifact.model_dump(mode="json")
+    data.pop("reference_files", None)  # 受保护：剥离
+    return data
+
+
+def _run_build_inner(release_id: uuid.UUID) -> None:
+    with _session() as db:
+        release = db.get(CourseRelease, release_id)
+        if release is None:
+            return
+        blueprint = _normalize_blueprint(release.blueprint_snapshot or {})
+        language = release.language
+        gen = db.get(CourseGeneration, release.generation_id)
+        snapshot_files = (gen.snapshot or {}).get("files", {}) if gen else {}
+
+    provider = _provider()
+    order = _task_order(blueprint)
+    total = len(order)
+    artifacts_public: list[dict] = []
+    reference_store: dict[str, list[dict]] = {}
+    cumulative_reference: dict[str, str] = {}   # 累积参考快照（连续性核心）
+    all_test_files: dict[str, str] = {}         # 累积测试（回归用）
+    ms_titles = {m["milestoneId"]: m["title"] for m in blueprint.get("milestones") or []}
+    passed_count = 0
+
+    for index, spec in enumerate(order):
+        task_id = spec["taskId"]
+        _update(release_id, status="verifying", current_task=task_id,
+                progress=int(index * 90 / max(total, 1)))
+
+        evidence = {}
+        for ev in spec.get("sourceEvidence") or []:
+            path = ev.get("path", "")
+            if path in snapshot_files:
+                evidence[path] = snapshot_files[path]
+
+        material = lesson_builder.build_task_lesson(
+            provider, spec, ms_titles.get(spec.get("milestoneId"), ""),
+            cumulative_reference, evidence, language,
+        )
+        repairs: list[dict] = []
+        verifications: list[dict] = []
+        artifact_status = "generated"
+        error_msg = None
+
+        for attempt in range(MAX_REPAIR_PER_TASK + 1):
+            # -- schema-valid：Pydantic 校验 + 防伪守卫
+            try:
+                artifact = _coerce_artifact(material, spec, language)
+            except Exception as exc:
+                error_msg = f"材料结构不合法：{exc}"
+                if attempt < MAX_REPAIR_PER_TASK:
+                    material = lesson_builder.repair_task_lesson(
+                        provider, material,
+                        [{"kind": "schema", "message": error_msg}], language)
+                    repairs.append({"round": attempt + 1, "problem": error_msg,
+                                    "changedFiles": [], "outcome": "still-failing"})
+                    continue
+                artifact_status = "failed"
+                break
+
+            problems = guard_starter(
+                material.get("starterFiles") or [],
+                material.get("referenceFiles") or [],
+                material.get("testFiles") or [],
+            )
+            if problems:
+                error_msg = "防伪守卫：" + "; ".join(problems[:3])
+                if attempt < MAX_REPAIR_PER_TASK:
+                    material = lesson_builder.repair_task_lesson(
+                        provider, material,
+                        [{"kind": "guard", "message": p} for p in problems], language)
+                    repairs.append({"round": attempt + 1, "problem": error_msg,
+                                    "changedFiles": [], "outcome": "still-failing"})
+                    continue
+                artifact_status = "failed"
+                break
+
+            # -- build/tests：真实沙箱验证参考实现
+            ref_files = merge_files(cumulative_reference,
+                                    {f["path"]: f["content"] for f in material["referenceFiles"]})
+            task_tests = {f["path"]: f["content"] for f in material["testFiles"]}
+            run_files = {**ref_files, **task_tests}
+            outcome = run_in_sandbox(
+                language, run_files, "test", None,
+                list(task_tests.keys()), timeout_s=60.0,
+            )
+            verifications.append({**outcome.to_dict(), "kind": "reference-tests"})
+            if outcome.status != "passed":
+                error_msg = f"参考实现测试未通过：{outcome.failed}/{outcome.total} 失败"
+                # -- regression：前阶段测试在当前参考上（回归证据）
+                if all_test_files:
+                    reg_files = {**ref_files, **all_test_files}
+                    reg = run_in_sandbox(language, reg_files, "test", None,
+                                         list(all_test_files.keys()), timeout_s=60.0)
+                    verifications.append({**reg.to_dict(), "kind": "regression"})
+                if attempt < MAX_REPAIR_PER_TASK:
+                    detail_errors = [
+                        {"kind": v.get("kind") or "test", "message": v.get("message", "")}
+                        for v in outcome.diagnostics
+                    ] or [{"kind": "test", "message": error_msg}]
+                    detail_errors.append({
+                        "kind": "stdout",
+                        "message": (outcome.stdout_tail or "")[-1500:],
+                    })
+                    detail_errors.append({
+                        "kind": "stderr",
+                        "message": (outcome.stderr_tail or "")[-800:],
+                    })
+                    material = lesson_builder.repair_task_lesson(
+                        provider, material, detail_errors, language)
+                    repairs.append({"round": attempt + 1, "problem": error_msg,
+                                    "changedFiles": sorted(set(material.get("referenceFiles", []) and
+                                                              [f["path"] for f in material["referenceFiles"]] +
+                                                              [f["path"] for f in material.get("testFiles", [])])),
+                                    "outcome": "still-failing"})
+                    continue
+                artifact_status = "failed"
+                break
+
+            # 通过：starter 期望失败证据（测试有效性 + 不泄露答案）
+            starter_run = {**merge_files(cumulative_reference,
+                                          {f["path"]: f["content"] for f in material["starterFiles"]}),
+                           **task_tests}
+            starter_outcome = run_in_sandbox(
+                language, starter_run, "test", None,
+                list(task_tests.keys()), timeout_s=45.0,
+            )
+            starter_ok = starter_outcome.status == "failed" or starter_outcome.failed > 0
+            verifications.append({
+                **starter_outcome.to_dict(),
+                "kind": "starter-expected-fail",
+                "status": "passed" if starter_ok else "failed",
+            })
+            if not starter_ok:
+                # starter 全过 = 测试对本任务核心无效（答案泄露或测试空转）
+                error_msg = "starter 全部测试通过——测试未覆盖本任务待实现逻辑（疑似泄露/空转）"
+                if attempt < MAX_REPAIR_PER_TASK:
+                    leak_context = json.dumps({
+                        "starter": {f["path"]: f["content"][:1200] for f in material.get("starterFiles", [])},
+                        "tests": {f["path"]: f["content"][:1200] for f in material.get("testFiles", [])},
+                    }, ensure_ascii=False)
+                    material = lesson_builder.repair_task_lesson(
+                        provider, material,
+                        [
+                            {"kind": "starter-passes",
+                             "message": error_msg + "。当前 starter 与测试内容：" + leak_context[:6000]
+                             + "。修复方向：starter 必须删除本任务核心实现只留 TODO 骨架（保留接口签名/文档字符串）；或者测试必须新增针对待实现功能的断言。"},
+                        ], language)
+                    continue
+                artifact_status = "failed"
+                break
+
+            # 成功：更新修复轮结论 + 累积快照
+            if repairs:
+                repairs[-1]["outcome"] = "fixed"
+            cumulative_reference = ref_files
+            all_test_files.update(task_tests)
+            artifact_status = "tests-passed"
+            error_msg = None
+
+            artifact.status = artifact_status
+            reference_store[task_id] = [{"path": f["path"], "content": f["content"]}
+                                        for f in material["referenceFiles"]]
+            art_dict = _coerce_artifact(material, spec, language).model_dump(mode="json", by_alias=True)
+            art_dict["status"] = artifact_status
+            art_dict["verifications"] = verifications
+            art_dict["repairs"] = repairs
+            art_dict["error"] = None
+            art_dict.pop("reference_files", None)
+            artifacts_public.append(art_dict)
+            passed_count += 1
+            break
+
+        if artifact_status != "tests-passed":
+            art_dict = {
+                "task_id": task_id,
+                "milestone_id": spec.get("milestoneId", ""),
+                "language": language,
+                "instructions": material.get("instructions") or
+                                {"title": spec.get("title", task_id)},
+                "starter_files": material.get("starterFiles") or [],
+                "test_files": material.get("testFiles") or [],
+                "hints": material.get("hints") or [],
+                "status": "failed",
+                "verifications": verifications,
+                "repairs": repairs,
+                "error": error_msg,
+                "artifact_version": attempt + 1 if 'attempt' in dir() else 1,
+                "generation_model": getattr(provider, "name", ""),
+            }
+            artifacts_public.append(art_dict)
+            _update(release_id, status="failed", error=f"任务 {task_id} 验证失败：{error_msg}",
+                    artifacts=artifacts_public, reference_store=reference_store,
+                    progress=100, current_task=task_id,
+                    verification_report={"passed": passed_count, "total": total,
+                                         "failed_task": task_id})
+            return
+
+    # ---- 最终集成：全部任务测试在最终参考快照上一次通过
+    _update(release_id, status="verifying", progress=92)
+    final = run_in_sandbox(language, {**cumulative_reference, **all_test_files},
+                           "test", None, list(all_test_files.keys()), timeout_s=90.0)
+    report = {
+        "passed": passed_count, "total": total,
+        "finalIntegration": final.to_dict(),
+    }
+    if final.status != "passed":
+        _update(release_id, status="failed",
+                error=f"最终集成验证未通过（{final.failed}/{final.total} 失败）",
+                artifacts=artifacts_public, verification_report=report, progress=100)
+        return
+
+    _update(release_id, status="ready", progress=100, current_task=None,
+            artifacts=artifacts_public, reference_store=reference_store,
+            verification_report=report, ready_at=utcnow())
+
+
+def _task_description(artifact: dict | None, spec: dict) -> str:
+    instructions = (artifact or {}).get("instructions") or {}
+    return (instructions.get("goal") or instructions.get("context")
+            or spec.get("description", ""))[:900]
+
+
+def _coerce_artifact(material: dict, spec: dict, language: str) -> LessonArtifact:
+    instructions = dict(material.get("instructions") or {})
+    instructions.setdefault("title", spec.get("title", ""))
+    return LessonArtifact(
+        task_id=spec["taskId"],
+        milestone_id=spec.get("milestoneId", ""),
+        language=language,
+        instructions=instructions,
+        starter_files=material.get("starterFiles") or [],
+        test_files=material.get("testFiles") or [],
+        reference_files=material.get("referenceFiles") or [],
+        hints=material.get("hints") or [],
+        status="schema-valid",
+        generation_model="",
+    )

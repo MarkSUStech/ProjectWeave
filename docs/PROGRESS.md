@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-11（P7.1 Course Architect Agent，D41）
+更新时间：2026-10-11（P7.2 可执行课程生成，D42）
 
 ## 已完成（经过验证）
 
@@ -533,3 +533,21 @@
       全部数据来自真实后端记录
 - [x] 验证：后端 **261 全过**（+25 课程生成专项）；前端 **274 全过**
   （+3 页面交互）；真实 E2E（micrograd + DeepSeek + GitHub）见交付报告
+
+### P7.2 可执行课程生成（D42）
+
+- [x] **Lesson Builder**：每任务一次 LLM 产出四类材料（说明/starter/
+      tests/reference/hints）+ 前任务参考实现传递（累积工程）+ 修复轮
+      （真实 stdout/stderr 反馈）
+- [x] **Course Verifier（真实沙箱）**：PythonRunner + Docker 沙箱真实执行
+      参考实现测试；starter 期望失败验证（防答案泄露/测试空转）；防伪守卫
+      （TODO/泄露/空断言）；最终集成（全部任务测试在最终参考上通过）
+- [x] **CourseRelease**：版本化不可变；参考实现受保护存储（API 剥离）；
+      蓝图快照冻结；重启恢复（卡住标 failed 可重试）
+- [x] **instantiate**：ready release → 学习项目（首任务 starter+全部任务
+      +hints；course-release 模板标记；不复用默认种子）
+- [x] **API 5 端点 + 前端**：build-lessons/releases/lessons/release/
+      instantiate；生成页课程内容进度 + "开始学习"进 IDE
+- [x] 验证：后端 **268 全过**（+7：守卫四类违规/合并/真实沙箱 3 个/
+      流水线/恢复）；前端 **274 全过**；**真实全链 E2E**（micrograd：
+      GitHub→蓝图→材料→沙箱验证→发布→实例化→IDE 首任务测试）

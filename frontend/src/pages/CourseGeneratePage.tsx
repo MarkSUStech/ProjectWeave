@@ -3,18 +3,22 @@
  * （里程碑/任务/依赖图/证据/验证）→ 发布。全部数据来自真实后端记录。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
+  buildLessons,
   createCourseGeneration,
   getCourseAnalysis,
   getCourseBlueprint,
   getCourseGeneration,
+  getRelease,
+  instantiateRelease,
   publishCourseGeneration,
   retryCourseGeneration,
   STAGE_LABELS,
   TERMINAL_STATUSES,
   type CourseBlueprint,
   type CourseGeneration,
+  type CourseRelease,
   type RepositoryAnalysis,
   type TaskSpec,
   type ValidationInfo,
@@ -39,6 +43,7 @@ export default function CourseGeneratePage() {
   const [validation, setValidation] = useState<ValidationInfo | null>(null)
   const [selectedTask, setSelectedTask] = useState<TaskSpec | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [release, setRelease] = useState<CourseRelease | null>(null)
   const [busy, setBusy] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -79,6 +84,15 @@ export default function CourseGeneratePage() {
 
   useEffect(() => stopPolling, [stopPolling])
 
+  // 课程内容生成轮询
+  useEffect(() => {
+    if (!release || TERMINAL_STATUSES.has(release.status)) return
+    const timer = setInterval(() => {
+      void getRelease(release.id).then((d) => setRelease(d)).catch(() => undefined)
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [release?.id, release?.status]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const submit = useCallback(async () => {
     setError(null)
     setBusy(true)
@@ -105,6 +119,31 @@ export default function CourseGeneratePage() {
     }
   }, [gen])
 
+  const startBuildLessons = useCallback(async () => {
+    if (!gen) return
+    setBusy(true)
+    try {
+      setRelease(await buildLessons(gen.id))
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }, [gen])
+
+  const startLearning = useCallback(async () => {
+    if (!release) return
+    setBusy(true)
+    try {
+      const result = await instantiateRelease(release.id, `${release.courseTitle}（我的课程）`)
+      navigate(`/projects/${result.projectId}/ide`)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }, [release])
+
   const retry = useCallback(async () => {
     if (!gen) return
     setBusy(true)
@@ -117,6 +156,7 @@ export default function CourseGeneratePage() {
     }
   }, [gen])
 
+  const navigate = useNavigate()
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
       <div className="mb-2 flex items-center justify-between">
@@ -344,6 +384,57 @@ export default function CourseGeneratePage() {
             )}
           </div>
         </section>
+      )}
+
+      {/* 课程内容生成（P7.2） */}
+      {gen?.status === 'published' && !release && (
+        <section className="mb-6 rounded-lg border border-edge-soft p-4">
+          <h2 className="mb-1 text-sm font-medium text-ink">课程内容生产</h2>
+          <p className="mb-3 text-xs leading-relaxed text-ink-dim">
+            蓝图已发布。下一步：为每个任务生成初始代码、pytest 测试与参考实现，
+            并在真实 Docker 沙箱中验证参考实现能通过全部测试（约 5-20 分钟）。
+          </p>
+          <Button size="sm" disabled={busy} onClick={() => void startBuildLessons()}>
+            生成课程内容并验证
+          </Button>
+        </section>
+      )}
+
+      {release && (
+        <section className="mb-6 rounded-lg border border-edge-soft p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-ink">
+              课程内容 · release v{release.releaseVersion}
+            </h2>
+            <Badge tone={release.status === 'ready' ? 'ok' : release.status === 'failed' ? 'danger' : 'info'}>
+              {release.status === 'generating' ? '生成中' : release.status === 'verifying' ? `验证中${release.currentTask ? `（${release.currentTask}）` : ''}` : release.status === 'ready' ? '已就绪' : '失败'}
+            </Badge>
+          </div>
+          <div className="mb-2 h-1.5 overflow-hidden rounded bg-panel">
+            <div className="h-full bg-accent transition-all" style={{ width: `${release.progress}%` }} />
+          </div>
+          <div className="mb-3 text-[11px] text-ink-faint">
+            任务 {release.passedTasks}/{release.totalTasks} 通过真实沙箱验证
+            {release.failedTasks > 0 && <span className="text-danger">（{release.failedTasks} 失败）</span>}
+          </div>
+          {release.status === 'failed' && release.error && (
+            <p role="alert" className="rounded border border-danger/40 bg-danger/10 px-2.5 py-2 text-xs text-danger">{release.error}</p>
+          )}
+          {release.status === 'ready' && (
+            <div className="flex items-center gap-3">
+              <Button size="sm" disabled={busy} onClick={() => void startLearning()}>
+                开始学习（创建项目进入 IDE）
+              </Button>
+              <span className="text-[11px] text-ink-faint">
+                将创建学习项目并进入教学 IDE（首任务初始代码 + 可运行测试）
+              </span>
+            </div>
+          )}
+        </section>
+      )}
+
+      {release && !TERMINAL_STATUSES.has(release.status) && (
+        <div className="flex justify-center"><Spinner label="生成与验证课程内容（真实沙箱执行中，请勿关闭页面）…" /></div>
       )}
 
       {gen && !TERMINAL_STATUSES.has(gen.status) && (
