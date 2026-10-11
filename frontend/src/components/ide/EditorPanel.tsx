@@ -84,6 +84,12 @@ export function EditorPanel({
   const debugCommand = useDebugStore((s) => s.command)
   const debugStop = useDebugStore((s) => s.stop)
 
+  // onMount 一次性回调读取最新状态用的 ref（避免闭包过期：切换文件后断点加错文件）
+  const openPathRef = useRef(openPath)
+  openPathRef.current = openPath
+  const toggleBreakpointRef = useRef(toggleBreakpoint)
+  toggleBreakpointRef.current = toggleBreakpoint
+
   useEffect(() => {
     configureMonaco()
   }, [])
@@ -128,18 +134,41 @@ export function EditorPanel({
   const handleEditorMount = (editor: MonacoEditor.IStandaloneCodeEditor, monaco: typeof import('monaco-editor')) => {
     editorRef.current = editor
     decorationsRef.current = null
-    // 行号边缘点击 = 切换断点（仅 C++ 文件；调试为远程沙箱能力）
+    // onMount 只执行一次：通过 ref 读取当前文件（闭包里的 openPath 切换文件后会过期）
     editor.onMouseDown((e) => {
-      if (openPath === null) return
-      if (detectLanguageOf(openPath) !== 'cpp') return
+      const currentPath = openPathRef.current
+      if (currentPath === null) return
+      if (detectLanguageOf(currentPath) !== 'cpp') return
       const targetType = e.target.type
       if (
         targetType === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
         targetType === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
       ) {
         const line = e.target.position?.lineNumber
-        if (line !== undefined) toggleBreakpoint(openPath, line)
+        if (line !== undefined) toggleBreakpointRef.current(currentPath, line)
       }
+    })
+    // 可发现性（VS Code 惯例）：C++ 文件悬停行号区域时显示半透明圆点，提示可点击设断点
+    let hoverDecoration: MonacoEditor.IEditorDecorationsCollection | null = null
+    editor.onMouseMove((e) => {
+      const currentPath = openPathRef.current
+      const inGutter =
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
+      const line = e.target.position?.lineNumber
+      hoverDecoration?.clear()
+      hoverDecoration = null
+      if (!inGutter || currentPath === null || detectLanguageOf(currentPath) !== 'cpp' || line === undefined) return
+      const alreadySet = (useDebugStore.getState().breakpoints[currentPath] ?? []).includes(line)
+      if (alreadySet) return  // 已有断点的行不再显示幽灵圆点
+      hoverDecoration = editor.createDecorationsCollection([{
+        range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 },
+        options: { isWholeLine: false, glyphMarginClassName: 'pw-breakpoint-hover-glyph', stickiness: 1 },
+      }])
+    })
+    editor.onMouseLeave(() => {
+      hoverDecoration?.clear()
+      hoverDecoration = null
     })
   }
 

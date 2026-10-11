@@ -161,3 +161,13 @@ html[data-ui-density="spacious"] .app-sidebar nav a { padding-block: 0.9rem; }
   border-left: 2px solid #d29922;
   margin-left: 3px;
 }
+
+/* 断点幽灵圆点（悬停行号区提示可点击，VS Code 惯例） */
+.pw-breakpoint-hover-glyph {
+  background: rgba(229, 83, 75, 0.35);
+  border-radius: 50%;
+  margin-left: 6px;
+  width: 10px !important;
+  height: 10px !important;
+  cursor: pointer;
+}
