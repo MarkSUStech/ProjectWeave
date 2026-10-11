@@ -142,7 +142,17 @@ def evaluate_task(
             "traceId": payload.traceId,
         },
     )
-    return EvaluationResultRead(
+    # P7.3：课程项目——完成后解锁提示
+    unlocked: list[str] = []
+    from app.domains.projects.models import Project
+
+    proj = db.get(Project, pid)
+    if proj and proj.template_id and proj.template_id.startswith("course-release:"):
+        from app.domains.course_generation.lessons.lifecycle import on_task_completed
+
+        unlocked = on_task_completed(db, pid, task.task_id)
+
+    result = EvaluationResultRead(
         taskId=task.task_id,
         status=task.status,
         passed=passed,
@@ -151,3 +161,6 @@ def evaluate_task(
         warnings=warnings,
         trustLevel="practice",
     )
+
+    return result
+

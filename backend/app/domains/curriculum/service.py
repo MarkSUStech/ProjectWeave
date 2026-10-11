@@ -331,6 +331,9 @@ def generate_plan(db: Session, project_id: str, bump: bool = False) -> LearningP
         )
         # 任务直接知识要求（不展开闭包进活动标题，闭包作为学习活动单独排）
         required = task.required_concepts or []
+        # P7.3：课程候选概念（图谱外）安全降级——跳过闭包计算，不崩溃
+        existing_ids = set(db.scalars(select(KnowledgeConcept.id)))
+        required = [c for c in required if c in existing_ids]
         closure = _concept_closure(db, required)
         chain_concepts: list[str] = []
         for concept_id in required:

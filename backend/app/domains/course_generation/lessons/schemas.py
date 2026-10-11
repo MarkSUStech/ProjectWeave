@@ -104,7 +104,7 @@ class ArtifactPublicRead(APIModel):
     instructions: TaskInstructions
     starter_files: list[CodeFile]
     test_files: list[CodeFile]
-    hints: list[HintSpec]  # H1-H4 全量给 Tutor（服务端使用）；前端预览仅 H1-H3
+    hints: list[HintSpec]  # 服务端剥离 H4 后下发（H4 走 Tutor Gate）
     status: str
     verifications: list[SandboxVerification]
     repairs: list[RepairRecord]

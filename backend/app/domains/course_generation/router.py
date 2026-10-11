@@ -132,6 +132,14 @@ def publish(gen_id: str, db: Session = Depends(get_db)) -> GenerationPublishRead
 # ---------------------------------------------------------------- P7.2 课程内容/发布/实例化
 
 
+def _public_artifact(a: dict) -> ArtifactPublicRead:
+    """公开材料：剥离 H4（答案级帮助走 Tutor Gate）与参考实现相关字段。"""
+    data = dict(a)
+    hints = [h for h in (data.get("hints") or []) if (h.get("level") or h.get("hintLevel") or 1) <= 3]
+    data["hints"] = hints
+    return ArtifactPublicRead.model_validate(data)
+
+
 def _release_read(row) -> ReleaseRead:
     artifacts = row.artifacts or []
     passed = sum(1 for a in artifacts if a.get("status") == "tests-passed")
@@ -172,7 +180,7 @@ def get_lessons(gen_id: str, db: Session = Depends(get_db)) -> ReleaseDetailRead
     row = releases[0]
     base = _release_read(row)
     return ReleaseDetailRead(**base.model_dump(),
-                             artifacts=[ArtifactPublicRead.model_validate(a) for a in (row.artifacts or [])])
+                             artifacts=[_public_artifact(a) for a in (row.artifacts or [])])
 
 
 releases_router = APIRouter(prefix="/course-releases", tags=["course-generation"])
@@ -186,7 +194,7 @@ def get_release(release_id: str, db: Session = Depends(get_db)) -> ReleaseDetail
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
     base = _release_read(row)
     return ReleaseDetailRead(**base.model_dump(),
-                             artifacts=[ArtifactPublicRead.model_validate(a) for a in (row.artifacts or [])])
+                             artifacts=[_public_artifact(a) for a in (row.artifacts or [])])
 
 
 @releases_router.post("/{release_id}/instantiate", response_model=InstantiateResponse, status_code=201)
@@ -200,3 +208,35 @@ def instantiate(release_id: str, payload: InstantiateRequest | None = None,
     except lesson_publisher.ReleaseError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
     return InstantiateResponse(**result)
+
+
+# ---------------------------------------------------------------- P7.3 学习生命周期
+
+from app.domains.course_generation.lessons import lifecycle as lc
+
+
+project_course_router = APIRouter(prefix="/projects", tags=["course-generation"])
+
+
+@project_course_router.get("/{project_id}/course-progress")
+def get_course_progress(project_id: str, db: Session = Depends(get_db)):
+    try:
+        return lc.compute_lifecycle_status(db, _parse_id(project_id))
+    except lc.ReleaseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
+
+@project_course_router.post("/{project_id}/tasks/{task_id}/activate")
+def activate_task(project_id: str, task_id: str, db: Session = Depends(get_db)):
+    try:
+        return lc.activate_task(db, _parse_id(project_id), task_id)
+    except lc.ReleaseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
+
+@project_course_router.get("/{project_id}/final-report")
+def get_final_report(project_id: str, db: Session = Depends(get_db)):
+    try:
+        return lc.final_verification_report(db, _parse_id(project_id))
+    except lc.ReleaseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None

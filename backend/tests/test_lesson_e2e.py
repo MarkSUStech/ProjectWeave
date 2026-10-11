@@ -84,11 +84,12 @@ def test_micrograd_full_course_pipeline(e2e: TestClient):
     assert any(v["kind"] == "reference-tests" and v["status"] == "passed"
                for v in first["verifications"])
     assert any(v["kind"] == "starter-expected-fail" for v in first["verifications"])
-    assert any(v["kind"] == "final-integration" and v["status"] == "passed"
-               for v in [detail and e2e.get(
-                   f"/api/v1/course-releases/{release_id}").json()
-                   .get("verification_report", {}).get("finalIntegration", {})]
-               if isinstance(v, dict) and v) or True  # 集成报告在 verification_report
+    # 最终集成报告：通过 release 端点的 verification_report 字段（不含参考实现）
+    vr = e2e.get(f"/api/v1/course-releases/{release_id}").json()
+    report = vr.get("verification_report") or {}
+    final = report.get("finalIntegration") or {}
+    assert final.get("status") == "passed", f"集成未通过: {final}"
+    assert final.get("passed", 0) >= 1 and final.get("failed") == 0
 
     # ---- 4. 实例化学习项目
     inst = e2e.post(f"/api/v1/course-releases/{release_id}/instantiate",

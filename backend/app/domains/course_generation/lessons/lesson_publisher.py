@@ -178,9 +178,10 @@ def instantiate_project(db: Session, release_id, title: str | None = None) -> di
 
     # 种子任务（全部任务入图；测试文件路径绑定）
     ms_order = {m["milestoneId"]: i + 1 for i, m in enumerate(blueprint.get("milestones") or [])}
+    first_task_row = None
     for spec in order:
         artifact = by_task.get(spec["taskId"])
-        db.add(ProjectTask(
+        task_row = ProjectTask(
             project_id=project.id,
             task_id=spec["taskId"],
             milestone=ms_order.get(spec.get("milestoneId"), 1),
@@ -194,7 +195,13 @@ def instantiate_project(db: Session, release_id, title: str | None = None) -> di
             acceptance_criteria=spec.get("acceptanceCriteria") or [],
             hints=(artifact or {}).get("hints") or [],
             viz_suggestion="",
-        ))
+        )
+        db.add(task_row)
+        if first and spec["taskId"] == first["taskId"]:
+            first_task_row = task_row
+    # P7.3：首任务已注入 starter+tests → 标记 in-progress（已激活态）
+    if first_task_row is not None and first_task_row.status in ("pending", None):
+        first_task_row.status = "in-progress"
     db.commit()
     db.refresh(project)
     return {"project_id": project.id, "first_task_id": first["taskId"] if first else None}

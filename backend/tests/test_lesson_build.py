@@ -300,7 +300,7 @@ def test_build_lessons_to_ready_and_instantiate(client: TestClient, build_env, d
     # lessons 材料含 starter/tests/hints 且无 reference
     artifact = detail["artifacts"][0]
     assert artifact["starterFiles"] and artifact["testFiles"]
-    assert {h["level"] for h in artifact["hints"]} == {1, 2, 3, 4}
+    assert {h["level"] for h in artifact["hints"]} == {1, 2, 3}  # H4 由服务端剥离（Tutor Gate 控制）
 
     # 3) 实例化学习项目
     inst = client.post(f"/api/v1/course-releases/{release['id']}/instantiate",
