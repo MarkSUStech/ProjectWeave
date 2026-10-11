@@ -35,7 +35,7 @@ const decision = (overrides: Partial<TutorDecision> = {}): TutorDecision => ({
   confidence: 0.7,
   outcome: 'accepted',
   outcomeReason: '',
-  workspaceActions: [],
+  workspaceActions: [], toolCalls: [], agentRounds: 0,
   policyVersion: 'gate-v1',
   promptTokens: 800,
   completionTokens: 120,
@@ -181,5 +181,44 @@ describe('MentorPanel 工作台动作接线（验收场景 A-E）', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: '拒绝' }))
     expect(applyPatch).not.toHaveBeenCalled()
     expect(useWorkspaceStore.getState().pendingPatch).toBeNull()
+  })
+})
+
+
+// ---------------------------------------------------------------- P6 Agent 工具轨迹
+
+function traceDecision() {
+  return {
+    id: '9e2d6f6e-1b1f-4c0f-9b8a-2f2f5c6a7b8e',
+    projectId: 'p1', question: '为什么崩溃', trigger: 'user',
+    intent: 'hint', hintLevel: 2, message: '提示', targetConcepts: [],
+    explanation: '', confidence: 0.8, outcome: 'accepted', outcomeReason: '',
+    workspaceActions: [],
+    toolCalls: [
+      { tool: 'read_project_file', args: { path: 'src/main.cpp' }, ok: true, round: 1, durationMs: 12, summary: '{}', error: null },
+      { tool: 'get_recent_diagnostics', args: {}, ok: true, round: 2, durationMs: 8, summary: '{}', error: null },
+      { tool: 'exec_shell', args: {}, ok: false, round: 2, durationMs: 1, summary: '', error: '未知工具：exec_shell（白名单外）' },
+    ],
+    agentRounds: 3, policyVersion: 'gate-v1', promptTokens: 100, completionTokens: 50,
+    model: 'deepseek-chat', createdAt: '2026-10-11T00:00:00Z',
+  } as unknown as import('../types/tutor').TutorDecision
+}
+
+describe('Agent 工具调用轨迹（P6）', () => {
+  it('渲染真实后端轨迹：成功/失败与文件参数', async () => {
+    const { DecisionBubble } = await import('../components/ide/MentorPanel')
+    render(
+      <DecisionBubble
+        decision={traceDecision()}
+        projectId="p1"
+        onApplyPatch={() => ({ ok: true }) as never}
+      />,
+    )
+    const header = screen.getByText(/Agent 探索（3 次工具调用 · 3 轮）/)
+    const trace = header.parentElement?.textContent ?? ''
+    expect(trace).toContain('读取')
+    expect(trace).toContain('src/main.cpp')
+    expect(trace).toContain('获取最近的编译/运行错误')
+    expect(trace).toContain('未知工具：exec_shell')
   })
 })

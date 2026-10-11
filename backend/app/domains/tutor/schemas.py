@@ -45,6 +45,9 @@ class TutorDecisionRead(APIModel):
     outcome_reason: str
     workspace_actions: list[WorkspaceActionRead] = Field(default_factory=list)
     policy_version: str
+    # P6：Agent 工具调用轨迹（真实后端记录）
+    tool_calls: list[dict] = Field(default_factory=list)
+    agent_rounds: int = 0
     prompt_tokens: int
     completion_tokens: int
     model: str

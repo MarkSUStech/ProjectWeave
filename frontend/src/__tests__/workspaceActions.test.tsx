@@ -38,6 +38,8 @@ function decision(actions: WorkspaceAction[]): TutorDecision {
     outcome: 'accepted',
     outcomeReason: '',
     workspaceActions: actions,
+    toolCalls: [],
+    agentRounds: 0,
     policyVersion: 'gate-v1',
     promptTokens: 1,
     completionTokens: 1,

@@ -47,6 +47,9 @@ class TeachingDecision(Base):
     # Policy Gate 分级后的工作台动作提案（§10.2：A0/A1/A2）
     workspace_actions: Mapped[list] = mapped_column(JSONType, default=list)
     policy_version: Mapped[str] = mapped_column(String(20), default=POLICY_VERSION)
+    # P6 Agent 轨迹：[{tool, args, ok, round, durationMs, summary|error}]
+    tool_calls: Mapped[list] = mapped_column(JSONType, default=list)
+    agent_rounds: Mapped[int] = mapped_column(default=0)
     prompt_tokens: Mapped[int] = mapped_column(default=0)
     completion_tokens: Mapped[int] = mapped_column(default=0)
     model: Mapped[str] = mapped_column(String(50), default="")

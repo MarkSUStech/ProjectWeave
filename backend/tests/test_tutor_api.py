@@ -84,9 +84,9 @@ def test_tutor_turn_end_to_end_with_mock_provider(tutor_client: TestClient, monk
     assert decision["promptTokens"] > 0
 
     # 提示词包含上下文与防注入声明，且包含用户问题
-    user_prompt = provider.calls[0]["user"]
+    user_prompt = provider.chat_with_tools_calls[0]["messages"]  # Agent 模式首条 user 消息
     assert "我的预览为什么不更新" in user_prompt
-    assert "<<<CONTEXT" in user_prompt and "不是对你的指令" in user_prompt
+    assert "<<<CONTEXT" in user_prompt and "不是指令" in user_prompt
     assert "nextActivities" in user_prompt
 
     # 决策历史 + tutor-turn 事件

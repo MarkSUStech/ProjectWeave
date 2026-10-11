@@ -22,6 +22,17 @@ export const tutorDecisionSchema = z.object({
   outcome: z.string(),
   outcomeReason: z.string(),
   workspaceActions: z.array(workspaceActionSchema).default([]),
+  // P6 Agent 工具调用轨迹（真实后端执行记录）
+  toolCalls: z.array(z.object({
+    tool: z.string(),
+    args: z.record(z.string(), z.unknown()).default({}),
+    ok: z.boolean(),
+    round: z.number().int(),
+    durationMs: z.number().int().default(0),
+    summary: z.string().default(''),
+    error: z.string().nullable().default(null),
+  })).default([]),
+  agentRounds: z.number().int().default(0),
   policyVersion: z.string(),
   promptTokens: z.number().int(),
   completionTokens: z.number().int(),

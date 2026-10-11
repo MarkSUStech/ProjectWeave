@@ -261,24 +261,66 @@ def policy_gate(proposal: dict, request_answer_level: bool = False) -> tuple[dic
     return accepted, "accepted", ""
 
 
+def _parse_final_content(content: str) -> dict:
+    """解析最终教学决策 JSON（容错：剥离 markdown 代码围栏后仍需合法）。"""
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise TutorError("AI 返回的不是合法 JSON，请重试", status=502) from exc
+
+
 def create_turn(
     db: Session, project_id: str, question: str, provider,
     request_answer_level: bool = False, trigger: str = "user",
     extras: "dict | None" = None,
 ) -> TeachingDecision:
-    """一次教学回合：上下文 → LLM → Policy Gate → 落库。"""
+    """一次教学回合：上下文 →（Agent 工具循环 | 单次 LLM）→ Policy Gate → 落库。
+
+    P6：Provider 支持工具调用（supports_tools）时走 Agent Runtime——模型可
+    多轮调用白名单只读工具主动探索项目，最终决策仍过 Policy Gate；
+    不支持时保持原有单次调用路径（向后兼容）。
+    """
     try:
         project = get_project(db, project_id)
     except ProjectNotFoundError as exc:
         raise TutorError("project not found", status=404) from exc
 
     context = build_context(db, project, extras)
-    result: LLMResult = provider.chat(SYSTEM_PROMPT, build_user_prompt(question, context))
 
-    try:
-        proposal = json.loads(result.content)
-    except json.JSONDecodeError as exc:
-        raise TutorError("AI 返回的不是合法 JSON，请重试", status=502) from exc
+    tool_trace: list[dict] = []
+    agent_rounds = 0
+    if getattr(provider, "supports_tools", False):
+        from app.agents.context import build_initial_messages
+        from app.agents.runtime import agent_record_to_dicts, run_agent
+        from app.agents.schemas import AgentBudget, ToolContext
+        from app.agents.tools import register_builtin_tools
+
+        register_builtin_tools()
+        ctx = ToolContext(
+            db=db, project_id=str(project.id), owner_id="dev-user",
+            current_task_id=(extras or {}).get("currentTaskId"),
+        )
+        messages = build_initial_messages(question, context, request_answer_level)
+        run = run_agent(provider, messages, ctx, AgentBudget())
+        result_content = run.final_content
+        tool_trace = agent_record_to_dicts(run.tool_calls)
+        agent_rounds = run.rounds
+        prompt_tokens, completion_tokens, model_name = (
+            run.prompt_tokens, run.completion_tokens, run.model,
+        )
+    else:
+        result: LLMResult = provider.chat(SYSTEM_PROMPT, build_user_prompt(question, context))
+        result_content = result.content
+        prompt_tokens, completion_tokens, model_name = (
+            result.prompt_tokens, result.completion_tokens, result.model,
+        )
+
+    proposal = _parse_final_content(result_content)
 
     fields, outcome, outcome_reason = policy_gate(proposal, request_answer_level)
     workspace_actions, dropped_actions = validate_workspace_actions(
@@ -300,9 +342,11 @@ def create_turn(
         outcome_reason=outcome_reason,
         workspace_actions=workspace_actions,
         policy_version=POLICY_VERSION,
-        prompt_tokens=result.prompt_tokens,
-        completion_tokens=result.completion_tokens,
-        model=result.model,
+        tool_calls=tool_trace,
+        agent_rounds=agent_rounds,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        model=model_name,
     )
     db.add(decision)
     db.commit()

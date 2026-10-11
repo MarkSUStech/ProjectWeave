@@ -1,6 +1,6 @@
 # 进度记录
 
-更新时间：2026-10-11（P5.1 多语言课程适配与 C++ 指针教学实验，D39）
+更新时间：2026-10-11（P6 AI Teaching Agent，D40）
 
 ## 已完成（经过验证）
 
@@ -491,3 +491,25 @@
       p→x 已验证边→单步 x 10→20→迁移练习→7 概念 application 证据+3 事件，
       真实 Docker 沙箱）；三语言 E2E 复跑零回归；PG 4；前端 **270 全过** +
       typecheck/build；`docs/CPP_TRIAL_GUIDE.md` 试用指南
+
+### P6 AI Teaching Agent（D40）
+
+- [x] **Agent Runtime**（`app/agents/`）：后端控制多轮循环（LLM 提议 →
+      白名单执行 → 结果回填 → 续轮/收尾）；预算强制（轮 4/调用 8/Token
+      12k）；工具失败可恢复；耗尽安全收尾；完整调用轨迹
+- [x] **6 个只读工具**：项目文件列表/读文件（截断）/当前任务/真实诊断
+      （编译 file:line:col、运行 stderr、失败测试）/掌握状态/调试快照
+      （含已验证指针边）——全部复用已有业务；ToolContext 服务端注入
+      project_id，路径穿越与跨项目在 DB 行级即被拒绝
+- [x] **Provider 升级**：chat() 不变；chat_with_tools() 用 DeepSeek 原生
+      function calling（含完整 OpenAI 协议消息回填）；Mock 支持脚本化多轮
+- [x] **Tutor 接入**：能力检测分支（不支持工具的 Provider 走原路径，
+      零破坏）；决策照常过 Policy Gate（H4/A2 门控实测不变）；轨迹落库
+      teaching_decisions（tool_calls/agent_rounds 列 + 迁移）
+- [x] **前端轨迹**：MentorPanel 显示真实工具调用记录（✓/✗ + 参数 +
+      耗时；数据来自后端，无模拟动画）
+- [x] 验证：后端 **232 全过**（+20 Agent 专项：单次/连续/按结果决策/
+      坏参/穿越/跨项目/失败恢复/轮数/调用/Token 预算/未知工具/H4 门控/
+      A2 门控/轨迹/降级兼容）；**真实 DeepSeek E2E** 通过（Agent 主动
+      取诊断+读文件，回复引用真实行号与真实错误，H1 先预测提示）；
+      前端 **271 全过** + typecheck/build

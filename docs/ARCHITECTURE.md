@@ -51,6 +51,7 @@
   - `models.py`：`learning_events` 表（event_id 唯一幂等键、aggregate_id+sequence 复合索引、payload JSONB ≤4KB、类型白名单：file-saved/plan-generated/plan-replanned/assessment-submitted/code-run/tests-run）。
   - `service.py`：`append_event`（白名单/payload 校验、eventId 幂等跳过、aggregate 序列分配）、`server_event_id`（uuid5 确定性 id，重放自动去重）、按项目/类型查询。
   - `router.py`：`POST /api/v1/events` 批量上报（≤20 条）、`GET /api/v1/events` 查询。服务端事件由 file/curriculum/assessments 各 router 在编排层追加（D21）。
+- **Agent 基础设施** `app/agents/`（P6，D40）：`runtime.py` 后端控制的多轮工具调用循环（LLM 提议→白名单校验→服务端执行→role=tool 回填→续轮；预算轮 4/调用 8/Token 12k 由 policy 强制；耗尽安全收尾）；`registry.py` 白名单注册 + JSON Schema 参数校验；`schemas.ToolContext` 服务端注入 project_id（LLM 不可指定——文件读取经路径校验 + DB 行级过滤双保险）；`tools/` 六个只读工具（文件列表/读文件/当前任务/真实诊断/掌握状态/调试快照——全部复用已有业务模型）。Tutor 按 `supports_tools` 能力检测接入；最终决策照常过 Policy Gate；调用轨迹落库 `teaching_decisions.tool_calls`。
 - **AI 模块** `app/ai/provider.py`（P2.5，可插拔 LLM Adapter，D22）：
   - `DeepSeekProvider`：OpenAI 兼容 chat/completions（`PW_DEEPSEEK_API_KEY` 等 .env 配置，Key 不入库；json_object 强制结构化输出；Token 用量记录；认证/限流/网络错误分类）；
   - `MockProvider`（仅测试）与 `disabled`（默认，503 明确降级不伪造）；`transport` 注入口供 MockTransport 测试。

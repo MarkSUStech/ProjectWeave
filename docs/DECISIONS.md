@@ -552,3 +552,20 @@
 - **变化高亮修复**（memoryGraph/debugSnapshot）：键从"帧:代次"改为"**会话:帧**"——同帧值跨暂停代次比较（单步 x: 10→20 高亮），递归帧按帧 id 隔离，换会话重置；新增回归测试。
 
 **验证**：后端 212 全过（新增：模板选择/C++ 课程种子/Python 空课程/replan 不覆盖/cpp 概念图/cpp 诊断选题/源集策略/跨代次高亮回归）；**课程 E2E 1 个**（真实全流程：创建→诊断→路线→Task1 真实测试+验收→Task2 LLDB p→x 已验证边+单步 x 10→20→Task3 迁移练习→7 概念 application 维证据+3 事件）；三语言 E2E 复跑零回归；PG 4；前端 270 全过。
+
+## D40 · AI Teaching Agent：后端控制的工具调用循环 + 白名单只读工具
+
+**日期**：2026-10-11。
+
+**架构**（`backend/app/agents/`）：
+- **Runtime**（`runtime.py`）：后端控制的多轮循环——LLM 提议 tool_calls → 白名单校验 → 服务端执行（注入 ToolContext）→ 结果以 role=tool 回填 → 下一轮；模型返回纯文本即最终决策。预算由 `policy.py` 强制（轮数 4 / 工具调用 8 / Token 12000），耗尽注入"立即输出"收尾指令（tool_choice=none），仍失败抛 AgentError。工具失败以错误结果回给模型（可恢复），不中断运行。
+- **注册表**（`registry.py`）：白名单注册 + JSON Schema 参数校验（类型/必填/未知参数全拒）；`openai_tools()` 只导出名字/描述/Schema，处理器永不外泄。
+- **ToolContext**（服务端注入）：db + project_id（UUID 归一化）+ owner + current_task_id——LLM 永远拿不到也指定不了项目身份；文件读取经 `validate_file_path` + **DB 行级过滤**双重拒绝路径穿越与跨项目。
+- **第一批 6 个只读工具**：list_project_files / read_project_file（截断 200-8000）/ get_current_task / get_recent_diagnostics（真实编译/运行/测试错误含 file:line:col）/ get_learner_mastery / get_debug_snapshot（暂停位置/调用栈/变量/已验证指针边）。全部调用已有业务模型，零重复实现。
+- **Provider 升级**：`chat()` 原样保留；新增 `chat_with_tools()`——DeepSeek 原生 function calling（tools 参数 + tool_calls 响应）；assistant 消息回填用完整 OpenAI 协议（type=function + function{name, arguments:JSON-str}——DeepSeek 严格校验）。MockProvider 支持脚本化多轮（ScriptedRound）。
+- **Tutor 接入**：`supports_tools` 能力检测——支持则走 Agent 循环，否则原单次路径（向后兼容）。最终决策照常过 Policy Gate（H4 门控/A2 联动不变）；轨迹落库 `teaching_decisions.tool_calls/agent_rounds`（迁移 5df4409478dc）。
+- **前端**：MentorPanel 决策气泡上方渲染真实轨迹（"✓ 读取 src/main.cpp / ✗ 未知工具：exec_shell"），数据全部来自后端记录。
+
+**安全边界**：工具白名单（LLM 不能构造任意后端调用）；参数校验 + 项目行级权限；预算三重限制；工具结果声明为数据（防注入）；无任何写操作/Shell 执行/敏感配置暴露。
+
+**验证**：后端 232 全过（新增 20：注册表/校验/跨项目/穿越/截断/单次与连续调用/按结果决策/未知工具恢复/坏参恢复/轮数耗尽/调用预算/Token 预算/H4 门控/A2 门控/轨迹落库/降级路径）；**真实 DeepSeek E2E**（5.7s：诊断→读文件→H1 提示引用真实行号与真实错误内容）；前端 271 全过（轨迹渲染测试）。未来 Course Architect 直接复用 Runtime + Registry（新增工具即可）。

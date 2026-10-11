@@ -117,7 +117,7 @@ def test_suggestion_quiet_mode_never(p26_client: TestClient, monkeypatch):
 
     resp = p26_client.get(f"/api/v1/tutor/suggestions?projectId={pid}")
     assert resp.status_code == 200 and resp.json() is None
-    assert provider.calls == []  # Quiet 模式不调用 LLM
+    assert provider.llm_call_count == 0  # Quiet 模式不调用 LLM
 
 
 def test_suggestion_requires_consecutive_failures(p26_client: TestClient, monkeypatch):
@@ -126,7 +126,7 @@ def test_suggestion_requires_consecutive_failures(p26_client: TestClient, monkey
     provider = MockProvider()
     monkeypatch.setattr("app.domains.tutor.router.get_provider", lambda: provider)
     assert p26_client.get(f"/api/v1/tutor/suggestions?projectId={pid}").json() is None
-    assert provider.calls == []
+    assert provider.llm_call_count == 0
 
     # 再补两次失败 → 连续 4 次 → 生成建议（默认 adaptive）
     seed_events(p26_client, pid, ["error", "error"])
@@ -134,7 +134,7 @@ def test_suggestion_requires_consecutive_failures(p26_client: TestClient, monkey
     body = resp.json()
     assert body is not None and body["decision"]["trigger"] == "auto"
     # 建议提示词包含失败证据说明
-    assert "连续" in provider.calls[0]["user"]
+    assert "连续" in provider.chat_with_tools_calls[0]["messages"]
 
 
 def test_suggestion_cooldown_60s(p26_client: TestClient, monkeypatch):
@@ -147,7 +147,8 @@ def test_suggestion_cooldown_60s(p26_client: TestClient, monkeypatch):
     assert first is not None
     second = p26_client.get(f"/api/v1/tutor/suggestions?projectId={pid}").json()
     assert second is None  # 60s 冷却内不再生成
-    assert len(provider.calls) == 1
+    # 一次建议 = Agent 两轮（默认脚本：1 工具轮 + 1 最终决策轮）
+    assert provider.llm_call_count == 2
 
 
 def test_suggestion_guided_mode_works(p26_client: TestClient, monkeypatch):

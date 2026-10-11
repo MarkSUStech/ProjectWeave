@@ -20,6 +20,15 @@ import { useUiReducedMotion } from '../../hooks/useUiReducedMotion'
 const CodeDiff = lazy(() => import('./CodeDiff'))
 type CurrentFile = { path: string; content: string }
 
+const TOOL_LABELS: Record<string, string> = {
+  list_project_files: '查看项目文件列表',
+  read_project_file: '读取',
+  get_current_task: '检查当前任务要求',
+  get_recent_diagnostics: '获取最近的编译/运行错误',
+  get_learner_mastery: '查询知识掌握情况',
+  get_debug_snapshot: '读取调试快照',
+}
+
 const INTENT_LABELS: Record<string, string> = {
   question: '提问',
   hint: '提示',
@@ -28,7 +37,7 @@ const INTENT_LABELS: Record<string, string> = {
   redirect: '调整方向',
 }
 
-function DecisionBubble({
+export function DecisionBubble({
   decision,
   currentFile,
   projectId,
@@ -44,6 +53,18 @@ function DecisionBubble({
       <div className="ml-auto max-w-[95%] rounded-lg bg-accent-soft px-2.5 py-1.5 text-xs text-ink">
         {decision.question}
       </div>
+      {decision.toolCalls.length > 0 && (
+        <div className="max-w-[95%] space-y-0.5 rounded-lg border border-edge-soft/60 bg-panel px-2.5 py-1.5 font-mono text-[10px] leading-relaxed">
+          <div className="mb-0.5 text-ink-faint">Agent 探索（{decision.toolCalls.length} 次工具调用 · {decision.agentRounds} 轮）</div>
+          {decision.toolCalls.map((call, i) => (
+            <div key={i} className={call.ok ? 'text-ink-faint' : 'text-warn'}>
+              {call.ok ? '✓' : '✗'} {TOOL_LABELS[call.tool] ?? call.tool}
+              {typeof call.args.path === 'string' && <span className="text-ink-faint/70"> {call.args.path}</span>}
+              {!call.ok && call.error && <span className="text-warn/80"> — {call.error.slice(0, 60)}</span>}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="max-w-[95%] rounded-lg border border-edge-soft bg-panel-2 px-2.5 py-2 text-xs leading-relaxed text-ink-dim">
         <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
           <Badge tone="info">{INTENT_LABELS[decision.intent] ?? decision.intent}</Badge>
