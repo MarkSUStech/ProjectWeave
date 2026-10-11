@@ -281,3 +281,46 @@ export async function instantiateRelease(
     projectId: z.string().uuid(), firstTaskId: z.string().nullable(),
   }).parse(data)
 }
+
+
+// ---------------------------------------------------------------- P7.3 学习生命周期
+
+export const lifecycleTaskSchema = z.object({
+  taskId: z.string(),
+  status: z.enum(['locked', 'available', 'active', 'needs-fix', 'completed']),
+  dependsOn: z.array(z.string()).default([]),
+  milestone: z.number().int(),
+  title: z.string(),
+})
+
+export const courseProgressSchema = z.object({
+  courseMode: z.boolean(),
+  releaseId: z.string().nullable().default(null),
+  releaseVersion: z.number().int().default(0),
+  currentTask: z.string().nullable().default(null),
+  completedCount: z.number().int().default(0),
+  totalCount: z.number().int().default(0),
+  allCompleted: z.boolean().default(false),
+  tasks: z.array(lifecycleTaskSchema).default([]),
+})
+
+export type CourseProgress = z.infer<typeof courseProgressSchema>
+
+export async function getCourseProgress(projectId: string): Promise<CourseProgress> {
+  return courseProgressSchema.parse(
+    await api.get<unknown>(`/projects/${projectId}/course-progress`))
+}
+
+export interface ActivateResult {
+  activated: boolean
+  alreadyActive?: boolean
+  filesCreated?: string[]
+  filesUpdated?: string[]
+  conflicts?: Array<{ path: string; reason: string; suggestion: string }>
+  message?: string
+}
+
+export async function activateTask(projectId: string, taskId: string): Promise<ActivateResult> {
+  const data = await api.post<unknown>(`/projects/${projectId}/tasks/${taskId}/activate`, {})
+  return data as ActivateResult
+}

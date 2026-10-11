@@ -18,6 +18,14 @@ const STATUS_LABELS: Record<string, { text: string; tone: 'ok' | 'danger' | 'inf
   pending: { text: '待开始', tone: 'neutral' },
 }
 
+const LIFECYCLE_LABELS: Record<string, { text: string; tone: 'ok' | 'danger' | 'info' | 'neutral' }> = {
+  locked: { text: '🔒 未解锁', tone: 'neutral' },
+  available: { text: '可开始', tone: 'info' },
+  active: { text: '● 进行中', tone: 'info' },
+  'needs-fix': { text: '需修正', tone: 'danger' },
+  completed: { text: '✔ 已完成', tone: 'ok' },
+}
+
 export interface TaskPanelProps {
   projectId: string
   tasks: PlanTask[]
@@ -26,6 +34,10 @@ export interface TaskPanelProps {
   onSelectTask: (taskId: string) => void
   /** 运行任务绑定的测试（浏览器 Worker，返回逐文件结果） */
   onRunTaskTests: (testPaths: string[]) => Promise<TestFileResult[]>
+  /** 课程生命周期进度（P7.3；非课程项目为 null） */
+  courseProgress?: import('../../api/courseGeneration').CourseProgress | null
+  /** 激活任务（P7.3：安全合并文件） */
+  onActivateTask?: (taskId: string) => Promise<void>
 }
 
 export function TaskPanel({
@@ -34,6 +46,8 @@ export function TaskPanel({
   currentTaskId,
   onSelectTask,
   onRunTaskTests,
+  courseProgress,
+  onActivateTask,
 }: TaskPanelProps) {
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null)
   const [testResults, setTestResults] = useState<TestFileResult[]>([])
@@ -105,7 +119,15 @@ export function TaskPanel({
                     <span className="mr-1.5 font-mono text-[10px] text-ink-faint">M{task.milestone}</span>
                     {task.title}
                   </span>
-                  <Badge tone={meta.tone}>{meta.text}</Badge>
+                  <span className="flex shrink-0 items-center gap-1">
+                    {courseProgress && (() => {
+                      const lc = courseProgress.tasks.find((t) => t.taskId === task.taskId)
+                      if (!lc) return null
+                      const label = LIFECYCLE_LABELS[lc.status] ?? LIFECYCLE_LABELS.locked
+                      return <Badge tone={label.tone}>{label.text}</Badge>
+                    })()}
+                    {!courseProgress && <Badge tone={meta.tone}>{meta.text}</Badge>}
+                  </span>
                 </button>
               </li>
             )
@@ -168,14 +190,36 @@ export function TaskPanel({
             </div>
           )}
 
-          <Button
-            size="sm"
-            onClick={() => void runTests()}
-            disabled={running || currentTask.testFiles.length === 0}
-            className="w-full"
-          >
-            {running ? '测试运行中…' : '▶ 运行任务测试并验收'}
-          </Button>
+          {courseProgress && (() => {
+            const lc = courseProgress.tasks.find((t) => t.taskId === currentTask.taskId)
+            if (!lc) return null
+            if (lc.status === 'locked') {
+              return (
+                <div className="rounded border border-edge-soft bg-panel px-3 py-2 text-xs text-ink-faint">
+                  🔒 前置任务未完成：{lc.dependsOn.join('、')}
+                </div>
+              )
+            }
+            if (lc.status === 'available' && onActivateTask) {
+              return (
+                <Button size="sm" className="w-full" onClick={() => void onActivateTask(currentTask.taskId)}>
+                  ▶ 开始任务（注入初始代码与测试）
+                </Button>
+              )
+            }
+            return null
+          })()}
+
+          {(!courseProgress || courseProgress.tasks.find((t) => t.taskId === currentTask.taskId)?.status === 'active' || courseProgress.tasks.find((t) => t.taskId === currentTask.taskId)?.status === 'needs-fix') && (
+            <Button
+              size="sm"
+              onClick={() => void runTests()}
+              disabled={running || currentTask.testFiles.length === 0}
+              className="w-full"
+            >
+              {running ? '测试运行中…' : '▶ 运行任务测试并验收'}
+            </Button>
+          )}
 
           {error && (
             <p role="alert" className="rounded border border-danger/40 bg-danger/10 px-2.5 py-2 text-xs text-danger">

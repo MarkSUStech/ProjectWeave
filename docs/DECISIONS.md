@@ -603,3 +603,17 @@
 **核心不变式**：LLM 只生成；测试通过与否只由真实沙箱执行判定（标记五级 generated→schema-valid→build-valid→tests-passed / failed / unsupported 不混用）；参考实现服务端隔离；starter 期望失败是测试有效性的证据；练习信任级不越权。
 
 **验证**：后端 268 全过（+7 课程内容专项：防伪守卫四类违规/累积合并/真实沙箱参考通过/坏参考失败带诊断/starter 期望失败/流水线全绿含隔离与实例化/重启恢复）；前端 274 全过；**真实全链 E2E**（GitHub+DeepSeek+Docker）：蓝图→逐任务材料生成→真实沙箱验证→发布→实例化→学生项目首任务测试可运行。
+
+## D43 · 学生学习生命周期：任务状态机 + 安全合并 + 最终验收
+
+**日期**：2026-10-12。
+
+**缺陷修复（先行）**：E2E `or True` 虚假断言→真实集成报告检查；H4 从公开 API 服务端剥离（Tutor Gate 唯一通道）；starter 预期失败区分断言失败 vs 收集/导入错误（后者=不正常工程）；候选概念安全降级（curriculum service 过滤图谱外 ID 不崩溃）。
+
+**生命周期**（`lifecycle.py`）：状态机 locked→available→active→needs-fix→completed（服务端权威，客户端不可自行修改）；`compute_lifecycle_status` DAG 拓扑传播；`activate_task` 依赖闸门→三方合并→注入文件→更新状态（幂等，原子回滚）；`three_way_merge` 基线/课程/学生三方——新文件创建、未改学生代码保留、TODO 区域更新、双方修改冲突报告（绝不静默覆盖）；`final_verification_report` 全部完成后聚合参考集成状态与文件清单。instantiate 首任务标 in-progress。
+
+**API**：GET /projects/{id}/course-progress、POST /projects/{id}/tasks/{tid}/activate、GET /projects/{id}/final-report；evaluate 完成时返回解锁任务提示。
+
+**前端**：TaskPanel 课程项目显示生命周期徽标（🔒/可开始/●/✔）；locked 任务显示前置依赖；available 任务显示「开始任务」按钮；active/needs-fix 任务显示原有测试按钮。
+
+**验证**：后端 **282 全过**（+14：三方合并六案例、锁定拒绝、完成解锁、幂等激活、冲突报告、最终验收、H4 隔离、候选概念降级、非课程项目兼容）；前端 274 全过。
