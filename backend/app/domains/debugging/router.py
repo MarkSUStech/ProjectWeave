@@ -144,6 +144,7 @@ def _to_read(row) -> DebugSnapshotRead:
         buildDiagnostics=row.build_diagnostics or [],
         buildStdout=row.build_stdout or "",
         error=row.error,
+        programOutput=row.program_output or [],
         dapLog=row.dap_log or [],
         sandbox={"engine": row.sandbox_engine, "image": row.sandbox_image},
         createdAt=row.created_at,

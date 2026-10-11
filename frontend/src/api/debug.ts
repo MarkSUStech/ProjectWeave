@@ -94,6 +94,10 @@ export const debugSnapshotSchema = z.object({
   buildDiagnostics: z.array(diagnosticSchema).default([]),
   buildStdout: z.string().default(''),
   error: z.string().nullable().default(null),
+  programOutput: z.array(z.object({
+    category: z.enum(['stdout', 'stderr', 'system']).default('stdout'),
+    text: z.string(),
+  })).default([]),
   dapLog: z.array(z.record(z.string(), z.unknown())).default([]),
   sandbox: z.object({
     engine: z.string().nullable().default(null),

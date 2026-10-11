@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getProject } from '../api/projects'
 import { ApiError } from '../api/client'
@@ -392,6 +392,28 @@ function IdeWorkspace({ project }: { project: Project }) {
       codeFingerprint: draftFingerprint ?? undefined,
     })
   }, [openPath, buildProjectVfs, debugStart, layout, project.id, draftFingerprint])
+
+  // 调试期间的程序输出自动镜像到终端面板（用户熟悉的输出位置）
+  const seenOutputRef = useRef<{ sessionId: string; count: number } | null>(null)
+  useEffect(() => {
+    if (!debugSnapshot) return
+    const prev = seenOutputRef.current
+    const lines = debugSnapshot.programOutput ?? []
+    if (!prev || prev.sessionId !== debugSnapshot.id) {
+      seenOutputRef.current = { sessionId: debugSnapshot.id, count: 0 }
+    }
+    const state = seenOutputRef.current
+    if (state && lines.length > state.count) {
+      const fresh = lines.slice(state.count)
+      for (const line of fresh) {
+        useRunStore.getState().appendEntry(
+          line.category === 'stderr' ? 'error' : line.category === 'system' ? 'system' : 'log',
+          line.text,
+        )
+      }
+      state.count = lines.length
+    }
+  }, [debugSnapshot])
 
   // 暂停位置变化 → 自动打开对应源码文件（栈帧跳转同路径）
   const pausedLocation = debugSnapshot?.status === 'paused' ? debugSnapshot.location : null

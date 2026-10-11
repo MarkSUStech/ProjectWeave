@@ -83,6 +83,7 @@ def main():
             write_message(out, response(request))
             write_message(out, event("process", {"name": "fake-app", "systemProcessId": 4242, "startMethod": "launch"}))
             write_message(out, event("initialized"))
+            write_message(out, event("output", {"category": "stdout", "output": "程序启动" + chr(10)}))
         elif command == "setBreakpoints":
             requested = [bp.get("line") for bp in (args.get("breakpoints") or [{"line": l} for l in args.get("lines", [])])]
             bp_lines.update(requested)
@@ -167,6 +168,7 @@ def main():
                 state["generation"] += 1
                 send_later(0.05, event("stopped", {"reason": "breakpoint", "threadId": 1, "allThreadsStopped": True}))
             else:
+                write_message(out, event("output", {"category": "stdout", "output": "程序完成 x=20" + chr(10)}))
                 send_later(0.1, event("exited", {"exitCode": 0}))
                 send_later(0.12, event("terminated"))
         elif command == "pause":

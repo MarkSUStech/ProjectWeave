@@ -77,6 +77,8 @@ class DebugSession(Base):
     build_diagnostics: Mapped[list] = mapped_column(JSONType, default=list)
     build_stdout: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 程序输出（调试期间经 DAP output 事件捕获的 stdout/stderr，有界）
+    program_output: Mapped[list] = mapped_column(JSONType, default=list)
     # DAP 事件日志（有界）
     dap_log: Mapped[list] = mapped_column(JSONType, default=list)
 

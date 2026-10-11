@@ -45,6 +45,7 @@ MAX_STACK_FRAMES = 50
 MAX_VARIABLES_PER_SCOPE = 100
 MAX_VALUE_CHARS = 300
 MAX_DAP_LOG = 200
+MAX_PROGRAM_OUTPUT_LINES = 400
 STEP_SETTLE_TIMEOUT_S = 20.0
 
 
@@ -106,6 +107,8 @@ class _Handle:
         self.terminated = threading.Event()
         self.dap: DapClient | None = None
         self.dap_log: list[dict] = []
+        # 调试期间程序输出（DAP output 事件；有界缓冲）
+        self.program_output: list[dict] = []
         self.primary_thread_id: int | None = None
         # 暂停代次：每次 stopped 递增；所有按 DAP 引用缓存的数据以此隔离
         self.pause_seq = 0
@@ -363,6 +366,7 @@ def _finalize(handle: _Handle, session_id: uuid.UUID, reason: str, error: str | 
                 row.error = error
                 row.finished_at = utcnow()
                 row.dap_log = list(handle.dap_log)
+                row.program_output = list(handle.program_output)
                 db.commit()
                 append_event(
                     db,
@@ -541,6 +545,8 @@ def _persist_snapshot(handle: _Handle, session_id: uuid.UUID, status: str, reaso
         "scopes": snapshot.get("scopes", []),
         "current_location": snapshot.get("location"),
         "dap_log": list(handle.dap_log),
+        # 程序输出随暂停快照原子写入（消除 paused-先提交/输出-后提交的读取窗口）
+        "program_output": list(handle.program_output),
         "pause_seq": snapshot.get("pauseSeq", handle.pause_seq),
         "snapshot_thread_id": snapshot.get("threadId"),
         "pointer_graph": snapshot.get("pointerGraph"),
@@ -768,8 +774,23 @@ def _execute_command(handle: _Handle, session_id: uuid.UUID, item: _Command) -> 
     raise DapError(f"未知指令：{command}")
 
 
+def _flush_program_output(handle: _Handle, session_id: uuid.UUID, force: bool = False) -> None:
+    """程序输出落库（drain 批次内有新增或强制时写一次，避免逐行写库）。"""
+    if not force:
+        return
+    try:
+        with _session_factory() as db:
+            row = db.get(DebugSession, session_id)
+            if row is not None:
+                row.program_output = list(handle.program_output)
+                db.commit()
+    except Exception:
+        pass
+
+
 def _drain_events(handle: _Handle, session_id: uuid.UUID) -> None:
-    """处理积压 DAP 事件（stopped/continued/terminated 等）。"""
+    """处理积压 DAP 事件（stopped/continued/output/terminated 等）。"""
+    output_dirty = [False]
     while True:
         try:
             message = handle.event_queue.get_nowait()
@@ -791,8 +812,29 @@ def _drain_events(handle: _Handle, session_id: uuid.UUID) -> None:
         elif name == "continued":
             _persist_snapshot(handle, session_id, "running", None, {})
         elif name in ("terminated", "exited"):
+            if name == "exited":
+                pass  # exited 先行处理（上方分支）；terminated 走收尾
+            _flush_program_output(handle, session_id)
             _finalize(handle, session_id, "completed")
             handle.terminated.set()
             return
+        elif name == "output":
+            # 程序真实 stdout/stderr（console=internalConsole：输出经 DAP 回传）
+            category = body.get("category", "stdout")
+            if category in ("stdout", "stderr"):
+                text = str(body.get("output", ""))
+                for line in text.splitlines() or [""]:
+                    if line.strip():
+                        handle.program_output.append(
+                            {"category": category, "text": line[:MAX_VALUE_CHARS]}
+                        )
+                if len(handle.program_output) > MAX_PROGRAM_OUTPUT_LINES:
+                    del handle.program_output[: len(handle.program_output) - MAX_PROGRAM_OUTPUT_LINES]
+                output_dirty[0] = True
+        elif name == "exited":
+            code = body.get("exitCode")
+            handle.program_output.append({"category": "system", "text": f"程序已退出（退出码 {code}）"})
+            output_dirty[0] = True
         elif name == "thread":
             handle.log_dap("thread", str(body))
+    _flush_program_output(handle, session_id, force=output_dirty[0])

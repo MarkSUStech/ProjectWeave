@@ -104,6 +104,8 @@ class DebugSnapshotRead(APIModel):
     build_diagnostics: list[dict] = Field(default_factory=list)
     build_stdout: str = ""
     error: str | None = None
+    # 调试期间程序的真实 stdout/stderr（DAP output 事件捕获）
+    program_output: list[dict] = Field(default_factory=list)
     dap_log: list[dict] = Field(default_factory=list)
     sandbox: dict = Field(default_factory=dict)
     created_at: datetime

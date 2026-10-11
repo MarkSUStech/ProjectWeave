@@ -139,7 +139,15 @@ def test_cpp_course_full_flow():
     d2 = wait_paused(dbg, prev_seq=d1["pauseSeq"])
     locals2 = {v["name"]: v["value"] for s in d2["scopes"] if s["name"] == "Locals" for v in s["variables"]}
     assert locals2["x"] == "20" and d2["pauseSeq"] > d1["pauseSeq"]
-    req("DELETE", f"/debug-sessions/{dbg}")
+    # 程序输出：continue 到结束，DAP output 事件捕获真实 printf
+    req("POST", f"/debug-sessions/{dbg}/commands", {"command": "continue"})
+    for _ in range(60):
+        d3 = req("GET", f"/debug-sessions/{dbg}")
+        if d3["status"] == "terminated": break
+        time.sleep(0.5)
+    assert d3["status"] == "terminated" and d3["endReason"] == "completed"
+    joined = " ".join(line["text"] for line in d3["programOutput"])
+    assert "x = 20" in joined  # 真实 stdout 可见
 
     e2 = wait_exec(req("POST", "/executions", {
         "language": "cpp", "mode": "test", "entryPoint": None,

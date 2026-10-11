@@ -280,6 +280,8 @@ def test_snapshot_carries_pointer_graph_and_pause_seq(client: TestClient, ptr_en
     assert graph["nullPointers"] == [{"name": "np", "value": "0x0000000000000000"}]
     assert graph["unresolvedPointers"] == [{"name": "hp", "value": "0x000055555556b2b0"}]
     assert graph["addresses"]["x"] == "0x0000000000000100"
+    # 程序输出（DAP output 事件捕获）
+    assert any("程序启动" in line["text"] for line in snap["programOutput"])
     # 真实变量值（A）
     locals_scope = next(s for s in snap["scopes"] if s["name"] == "Locals")
     assert {v["name"]: v["value"] for v in locals_scope["variables"]}["x"] == "10"

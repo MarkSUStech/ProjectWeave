@@ -52,7 +52,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
         ],
       },
     ],
-    breakpoints: [], buildDiagnostics: [], buildStdout: '', error: null, dapLog: [],
+    breakpoints: [], buildDiagnostics: [], buildStdout: '', error: null, programOutput: [], dapLog: [],
     sandbox: { engine: 'docker', image: null },
     createdAt: '2026-10-11T00:00:00Z', startedAt: null, pausedAt: null, finishedAt: null,
     ...overrides,

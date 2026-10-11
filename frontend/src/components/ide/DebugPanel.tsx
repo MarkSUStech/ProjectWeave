@@ -177,6 +177,20 @@ export function DebugPanel({ onOpenFile }: { onOpenFile?: (path: string) => void
           </section>
         )}
 
+        {/* 程序输出（调试期间真实 stdout/stderr） */}
+        {snapshot && (snapshot.programOutput?.length ?? 0) > 0 && (
+          <section className="mb-3">
+            <div className="mb-1 text-[11px] font-medium text-ink-faint">程序输出</div>
+            <pre className="max-h-40 overflow-y-auto rounded border border-edge-soft bg-panel px-2 py-1 font-mono text-[10px] leading-relaxed">
+              {(snapshot.programOutput ?? []).slice(-60).map((line, i) => (
+                <div key={i} className={line.category === 'stderr' ? 'text-danger' : line.category === 'system' ? 'text-ink-faint' : 'text-ink-dim'}>
+                  {line.text}
+                </div>
+              ))}
+            </pre>
+          </section>
+        )}
+
         {/* 断点验证 */}
         {snapshot && snapshot.breakpoints.length > 0 && (
           <section className="mt-3">
