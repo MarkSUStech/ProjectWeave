@@ -183,4 +183,34 @@ describe('CourseGeneratePage', () => {
     fireEvent.click(screen.getByText(/重新生成课程内容（v2）/))
     await waitFor(() => expect(builds).toBe(2), { timeout: 3000 })
   }, 20000)
+
+  it('C++ 技术栈课程：按钮位置直接显示不支持说明（无需点击）', async () => {
+    fetchImpl = async (url, init) => {
+      if (url.endsWith('/course-generations') && init?.method === 'POST') {
+        return jsonResponse({ id: UUID, status: 'pending', progress: 0 }, 202)
+      }
+      if (url.includes(`/course-generations/${UUID}/analysis`)) {
+        return jsonResponse({ status: 'published', analysis: null, toolCalls: [] })
+      }
+      if (url.includes(`/course-generations/${UUID}/blueprint`)) {
+        return jsonResponse({
+          status: 'published',
+          blueprint: { ...blueprint, project: { ...blueprint.project, techStack: ['C++17', 'CMake'] } },
+          validation: { passed: true, issues: [], checkedAt: '2026-10-11T00:00:00Z' },
+        })
+      }
+      if (url.includes(`/course-generations/${UUID}`)) {
+        return jsonResponse(generation({ status: 'published', stage: 'published', progress: 100 }))
+      }
+      return jsonResponse({}, 404)
+    }
+    render(<MemoryRouter><CourseGeneratePage /></MemoryRouter>)
+    const input = screen.getByPlaceholderText(/micrograd/)
+    fireEvent.change(input, { target: { value: 'https://github.com/x/cpp-proj' } })
+    fireEvent.click(screen.getByText('开始生成'))
+
+    await waitFor(() => expect(screen.getByText(/暂不支持课程内容验证/)).toBeTruthy(), { timeout: 3000 })
+    expect(screen.getByText(/语言为 C\+\+/)).toBeTruthy()
+    expect(screen.queryByText('生成课程内容并验证')).toBeNull()
+  })
 })

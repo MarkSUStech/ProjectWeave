@@ -307,6 +307,15 @@ export const courseProgressSchema = z.object({
 
 export type CourseProgress = z.infer<typeof courseProgressSchema>
 
+/** 与后端 lesson_builder.detect_language 同规则（python 优先，默认 python）。 */
+export function detectCourseLanguage(stack: string[]): 'python' | 'cpp' | 'typescript' {
+  const joined = stack.join(' ').toLowerCase()
+  if (joined.includes('python')) return 'python'
+  if (joined.includes('c++') || joined.includes('cpp')) return 'cpp'
+  if (joined.includes('typescript') || joined.includes('javascript')) return 'typescript'
+  return 'python'
+}
+
 export async function getCourseProgress(projectId: string): Promise<CourseProgress> {
   return courseProgressSchema.parse(
     await api.get<unknown>(`/projects/${projectId}/course-progress`))

@@ -7,6 +7,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   buildLessons,
   createCourseGeneration,
+  detectCourseLanguage,
   getCourseAnalysis,
   getCourseBlueprint,
   getCourseGeneration,
@@ -33,6 +34,8 @@ const KIND_BADGES: Record<string, { text: string; tone: 'ok' | 'warn' | 'neutral
   inferred: { text: '推断', tone: 'warn' },
   unknown: { text: '未知', tone: 'neutral' },
 }
+
+const LANGUAGE_NAMES: Record<string, string> = { python: 'Python', cpp: 'C++', typescript: 'TypeScript' }
 
 export default function CourseGeneratePage() {
   const [searchParams] = useSearchParams()
@@ -421,13 +424,28 @@ export default function CourseGeneratePage() {
       {gen?.status === 'published' && !release && (
         <section className="mb-6 rounded-lg border border-edge-soft p-4">
           <h2 className="mb-1 text-sm font-medium text-ink">课程内容生产</h2>
-          <p className="mb-3 text-xs leading-relaxed text-ink-dim">
-            蓝图已发布。下一步：为每个任务生成初始代码、pytest 测试与参考实现，
-            并在真实 Docker 沙箱中验证参考实现能通过全部测试（约 5-20 分钟）。
-          </p>
-          <Button size="sm" disabled={busy} onClick={() => void startBuildLessons()}>
-            生成课程内容并验证
-          </Button>
+          {blueprint && detectCourseLanguage(blueprint.project.techStack) !== 'python' ? (
+            <div className="rounded border border-danger/40 bg-danger/10 px-2.5 py-2.5 text-xs leading-relaxed text-ink-dim">
+              <p className="mb-1 font-medium text-danger">
+                该课程语言为 {LANGUAGE_NAMES[detectCourseLanguage(blueprint.project.techStack)]}，
+                暂不支持课程内容验证
+              </p>
+              <p>
+                课程内容需要真实沙箱逐任务验证参考实现（当前仅支持 Python：Docker + pytest）。
+                蓝图已保留——可修改项目描述改用 Python 技术栈重新生成课程，或等待后续版本支持该语言。
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="mb-3 text-xs leading-relaxed text-ink-dim">
+                蓝图已发布。下一步：为每个任务生成初始代码、pytest 测试与参考实现，
+                并在真实 Docker 沙箱中验证参考实现能通过全部测试（约 5-20 分钟）。
+              </p>
+              <Button size="sm" disabled={busy} onClick={() => void startBuildLessons()}>
+                生成课程内容并验证
+              </Button>
+            </>
+          )}
         </section>
       )}
 
