@@ -138,9 +138,71 @@ def recover_stale_releases(db: Session) -> int:
     )))
     for row in stale:
         row.status = "failed"
-        row.error = "服务重启中断（可重新生成课程内容产生新版本）"
+        row.error = "服务重启中断（可从检查点恢复：重新生成课程内容将复用已验证任务）"
+    db.commit()
+    # 关联 Job 标记 interrupted（等待显式 resume）
+    from app.domains.course_generation.models import GenerationJob
+
+    interrupted = 0
+    for row in stale:
+        jobs = list(db.scalars(select(GenerationJob).where(
+            GenerationJob.release_id == row.id,
+            GenerationJob.status == "running",
+        )))
+        for job in jobs:
+            job.status = "interrupted"
+            job.lease_token = None
+            interrupted += 1
     db.commit()
     return len(stale)
+
+
+# ---------------------------------------------------------------- Generation Job（P8.2.1）
+
+
+def _start_job(release_id, generation_id):
+    """创建/复用该 release 的 Job 行（lease 防多 worker 并发写）。"""
+    import uuid as _uuid
+
+    from app.domains.course_generation.models import GenerationJob
+
+    token = _uuid.uuid4().hex
+    with _session() as db:
+        existing = db.scalar(select(GenerationJob).where(
+            GenerationJob.release_id == release_id))
+        if existing is not None:
+            existing.status = "running"
+            existing.lease_token = token
+            existing.error = None
+            existing.completed_task_ids = []
+            existing.reused_task_ids = []
+            existing.retry_count = (existing.retry_count or 0) + 1
+            db.commit()
+            return existing.id
+        job = GenerationJob(
+            release_id=release_id, generation_id=generation_id,
+            status="running", lease_token=token,
+        )
+        db.add(job)
+        db.commit()
+        return job.id
+
+
+def _job_update(job_id, **fields) -> None:
+    if job_id is None:
+        return
+    try:
+        with _session() as db:
+            from app.domains.course_generation.models import GenerationJob
+
+            row = db.get(GenerationJob, job_id)
+            if row is None:
+                return
+            for key, value in fields.items():
+                setattr(row, key, value)
+            db.commit()
+    except Exception:
+        pass  # Job 记录失败不影响课程生成本身
 
 
 def instantiate_project(db: Session, release_id, title: str | None = None) -> dict:
@@ -289,106 +351,413 @@ def _run_build(release_id: uuid.UUID) -> None:
         _update(release_id, status="failed", error=f"课程内容生产内部错误：{exc}")
 
 
+# ---------------------------------------------------------------- P8.2.1 增量流水线（D46）
+
+
+def _test_like_path(path: str) -> bool:
+    lower = path.lower()
+    base = lower.rsplit("/", 1)[-1]
+    return (lower.startswith("tests/") or "test" in base
+            or "cmakelists.txt" in lower)
+
+
+def _split_starter_test(starter_files: dict[str, str]):
+    """starter 工程 → (starterFiles, testFiles) 两组件（testFiles=测试注册与测试源）。"""
+    starters = [{"path": p, "content": c} for p, c in sorted(starter_files.items())
+                if not _test_like_path(p)]
+    tests = [{"path": p, "content": c} for p, c in sorted(starter_files.items())
+             if _test_like_path(p)]
+    return starters, tests
+
+
+def _material_from_state(state: dict) -> dict:
+    """内部状态（ref/starter 文件字典 + 元数据）→ 验证器/守卫的材料形状。"""
+    starter_files = dict(state["reference_files"])
+    starter_files.update(state["starter_overlay"])
+    starters, tests = _split_starter_test(starter_files)
+    ref_all = dict(state["reference_files"])
+    _, ref_tests = _split_starter_test(ref_all)
+    return {
+        "instructions": state["instructions"],
+        "starterFiles": starters,
+        "testFiles": tests,
+        "referenceFiles": [
+            {"path": p, "content": c} for p, c in sorted(ref_all.items())
+            if not _test_like_path(p)
+        ] + ref_tests,
+        "buildManifest": state["manifest"],
+        "hints": state["hints"],
+    }
+
+
+def _persist_checkpoint(db, release_id, generation_id, task_seq: int, task_id: str,
+                        blueprint_hash: str, protocol: str, sandbox_image: str,
+                        source_commit: str, reference_files: dict,
+                        test_registry: list, artifact: dict, reference_delta: list,
+                        evidence: list, diagnostics: dict) -> None:
+    from app.domains.course_generation.models import CourseCheckpoint
+    from app.domains.course_generation.lessons.consistency_validator import (
+        snapshot_hash_of,
+    )
+
+    db.add(CourseCheckpoint(
+        release_id=release_id, generation_id=generation_id,
+        task_seq=task_seq, task_id=task_id,
+        blueprint_hash=blueprint_hash, protocol_version=protocol,
+        sandbox_image=sandbox_image, source_commit=source_commit,
+        snapshot_files=reference_files,
+        snapshot_hash=snapshot_hash_of(reference_files),
+        test_registry=list(test_registry),
+        artifact=artifact, reference_delta=reference_delta,
+        verification_evidence=evidence, diagnostics=diagnostics,
+    ))
+    db.commit()
+
+
+def load_compatible_checkpoints(generation_id, blueprint_hash: str,
+                                protocol: str, sandbox_image: str,
+                                source_commit: str) -> dict[str, dict]:
+    """按任务取最新兼容检查点（blueprint/协议/镜像/源版本一致才可复用）。"""
+    from sqlalchemy import select as _select
+
+    from app.domains.course_generation.models import CourseCheckpoint
+
+    with _session() as db:
+        rows = db.scalars(_select(CourseCheckpoint).where(
+            CourseCheckpoint.generation_id == generation_id
+        ).order_by(CourseCheckpoint.task_seq.desc(), CourseCheckpoint.created_at.desc()))
+        picked: dict[str, dict] = {}
+        for row in rows:
+            if (row.blueprint_hash == blueprint_hash
+                    and row.protocol_version == protocol
+                    and (row.sandbox_image or "") == sandbox_image
+                    and (row.source_commit or "") == source_commit
+                    and row.task_id not in picked):
+                picked[row.task_id] = {
+                    "task_seq": row.task_seq,
+                    "task_id": row.task_id,
+                    "snapshot_files": dict(row.snapshot_files or {}),
+                    "test_registry": list(row.test_registry or []),
+                    "artifact": dict(row.artifact or {}),
+                    "reference_delta": list(row.reference_delta or []),
+                    "verification_evidence": list(row.verification_evidence or []),
+                    "diagnostics": dict(row.diagnostics or {}),
+                    "created_at": row.created_at.isoformat() if row.created_at else "",
+                }
+    # 只保留严格递增序列（task_seq 连续：0..n）——防止跳过中间任务
+    by_seq = sorted(picked.values(), key=lambda c: c["task_seq"])
+    usable: dict[str, dict] = {}
+    expect = 0
+    for cp in by_seq:
+        if cp["task_seq"] != expect:
+            break
+        usable[cp["task_id"]] = cp
+        expect += 1
+    return usable
+
+
 def _process_cpp_task(
-    provider, release_id, task_id: str, spec: dict, order: list, total: int,
+    provider, release_id, generation_id, blueprint_hash: str,
+    task_seq: int, task_id: str, spec: dict,
     milestone_title: str, cumulative_reference: dict[str, str],
     prior_test_names: list[str], evidence: dict[str, str],
     prior_failures: list[str] | None, is_final: bool,
 ) -> dict:
-    """P8.2：单个 C++/CMake 任务——生成 → 守卫 → 八步真实验证 → 有限修复。
+    """P8.2.1 增量流水线：ChangeSet 生成 → 确定性合成 → 一致性 → 八步验证
+    → 最小补丁修复 → 通过后固化 Checkpoint。
 
     返回 {passed, error, artifact, cumulative_reference, prior_test_names,
-    reference_delta}；artifact 已按公开契约（camelCase）组装。
+    reference_delta, diagnostics}。
     """
-    repairs: list[dict] = []
+    from app.domains.course_generation.lessons.change_applier import (
+        apply_file_changes,
+        compose_project_files,
+    )
+    from app.domains.course_generation.lessons.change_set import (
+        CHANGESET_PROTOCOL,
+        LessonChangeSet,
+        content_hash,
+    )
+    from app.domains.course_generation.lessons.consistency_validator import (
+        snapshot_hash_of,
+        validate_material,
+    )
+    from app.domains.course_generation.lessons.cpp_repair_agent import (
+        RepairBudget,
+        classify_failure,
+        repair_with_agent,
+    )
+
     _update(release_id, status="verifying", current_task=task_id)
+    # 增量协议：1 次生成 + 最多 5 轮最小补丁（验证硬标准不变；集成类任务
+    # 一次修复常需 2-3 轮收敛，3 轮实测偏紧）
+    budget = RepairBudget(max_llm_calls=1 + 5)
+    repairs: list[dict] = []
+    sandbox_image = "projectweave-sandbox-cpp:clang15-bookworm"
 
-    material = lesson_builder.build_cpp_cmake_task_lesson(
-        provider, spec, milestone_title, cumulative_reference, evidence)
-    # 重试上下文注入（上一版 release 的失败原因）
-    if prior_failures:
-        material = lesson_builder.repair_task_lesson(
-            provider, material,
-            [{"kind": "prior-failure", "message": p} for p in prior_failures],
-            "cpp")
+    base_files = dict(cumulative_reference)
+    snapshot_id = "root" if not base_files else f"verified:{task_id}:seq{task_seq - 1}"
+    snapshot_hash = snapshot_hash_of(base_files)
+    prev_contract = {
+        "buildManifest": {"testNames": prior_test_names},
+        "verifiedTests": prior_test_names,
+    }
 
-    for attempt in range(MAX_REPAIR_PER_TASK + 1):
-        problems = guard_starter(
-            material.get("starterFiles") or [],
-            material.get("referenceFiles") or [],
-            material.get("testFiles") or [],
-            "cpp",
-            expected_files=(material.get("instructions") or {}).get("expectedFiles"),
-        )
-        if problems:
-            if attempt < MAX_REPAIR_PER_TASK:
-                material = lesson_builder.repair_task_lesson(
-                    provider, material,
-                    [{"kind": "guard", "message": p} for p in problems]
-                    + [{"kind": "material-context", "message":
-                        "当前生成的文件清单与摘要：\n" + _material_context(material)}],
-                    "cpp")
-                repairs.append({"round": attempt + 1,
-                                "problem": "防伪守卫：" + "; ".join(problems[:3]),
-                                "changedFiles": [], "outcome": "still-failing"})
+    state: dict | None = None       # {reference_files, starter_overlay, instructions, manifest, hints}
+    raw_changeset: dict | None = None
+    schema_error: str | None = None
+
+    def _apply_repair_patch(patch: list[dict]) -> tuple[bool, list[dict]]:
+        """修复补丁应用到当前参考工程（baseHash=当前内容）。"""
+        normalized = []
+        for entry in patch:
+            copy = dict(entry)
+            if copy.get("operation") in ("update", "delete") and not copy.get("baseHash"):
+                current = (state or {}).get("reference_files", {}).get(copy.get("path", ""))
+                if current is not None:
+                    copy["baseHash"] = content_hash(current)
+            normalized.append(copy)
+        try:
+            from app.domains.course_generation.lessons.change_set import FileChange
+
+            changes = [FileChange.model_validate(entry) for entry in normalized]
+        except Exception as exc:  # noqa: BLE001 —— 补丁结构非法如实返回
+            return False, [{"errorCode": "schema-error", "filePath": "<patch>",
+                            "expected": "合法 FileChange", "actual": str(exc)[:200],
+                            "suggestedRepairScope": "<patch>"}]
+        starter_changes = [c for c in changes if c.target == "starter"]
+        ref_changes = [c for c in changes if c.target != "starter"]
+        # 防线：修复补丁不得修改前序任务已验证的测试源（防破坏回归）——
+        # 铁律的确定性兜底（LLM 违规直接拒绝该条补丁）
+        protected_tests = {p for p in base_files
+                           if p.startswith("tests/") and p.endswith((".cpp", ".cc"))}
+        violating = [c.path for c in ref_changes if c.path in protected_tests
+                     and c.operation in ("update", "delete")]
+        if violating:
+            return False, [{
+                "errorCode": "protected-prior-test",
+                "filePath": p, "expected": "前序已验证测试保持不变",
+                "actual": f"补丁请求 {next(c.operation for c in ref_changes if c.path == p)}",
+                "suggestedRepairScope": "本任务自己的测试/注册",
+            } for p in violating]
+        if starter_changes:
+            # starter 挖空补丁：直接覆盖 overlay（挖空语义：TODO + 默认返回）
+            for change in starter_changes:
+                if change.operation == "delete":
+                    state["starter_overlay"].pop(change.path, None)
+                else:
+                    state["starter_overlay"][change.path] = change.content
+        if not ref_changes:
+            return True, [{"path": c.path, "operation": c.operation,
+                           "hash": content_hash(c.content), "reason": c.reason,
+                           "changeCategory": c.change_category, "target": "starter"}
+                          for c in starter_changes]
+        applied = apply_file_changes(state["reference_files"], ref_changes)
+        if not applied.ok:
+            return False, applied.conflicts
+        state["reference_files"] = applied.files
+        return True, [*applied.applied,
+                      *[{"path": c.path, "operation": c.operation,
+                         "hash": content_hash(c.content), "reason": c.reason,
+                         "changeCategory": c.change_category, "target": "starter"}
+                        for c in starter_changes]]
+
+    last_errors: list[dict] = []
+    last_problems: list[str] = []
+
+    for attempt in range(7):  # 1 生成 + 5 修复 + 1 兜底
+        # ---- 生成 / 再生成
+        if state is None:
+            extra = ""
+            if schema_error:
+                extra = f"上次输出未通过 ChangeSet 结构校验：{schema_error}。请修正 JSON 结构。"
+            elif prior_failures:
+                extra = "上一版课程此任务失败原因（务必规避）：" + "; ".join(prior_failures[:4])
+            response = lesson_builder.build_cpp_cmake_changeset(
+                provider, spec, milestone_title, base_files,
+                snapshot_id, snapshot_hash, prev_contract, extra_instructions=extra)
+            budget.llm_calls += 1
+            raw_changeset = response
+            try:
+                change_set = LessonChangeSet.model_validate(raw_changeset)
+            except Exception as exc:  # noqa: BLE001
+                schema_error = str(exc)[:400]
+                if not budget.llm_allowed():
+                    return _cpp_task_failed(
+                        task_id, spec, {"instructions": {}}, repairs, [],
+                        f"ChangeSet 结构不合法且预算耗尽：{schema_error}")
+                continue
+            ref_apply, starter_apply = compose_project_files(base_files, change_set)
+            if not ref_apply.ok or not starter_apply.ok:
+                # 合成失败（baseHash 不符/重复/受保护删除）：无可用工作工程，
+                # 带结构化冲突重新生成（不进补丁路径——无合成基线可补）
+                conflicts = ref_apply.conflicts or starter_apply.conflicts
+                last_errors = conflicts
+                schema_error = "变更集冲突：" + "; ".join(
+                    f"{c.get('errorCode')}@{c.get('filePath')}"
+                    f"（期望 {str(c.get('expected'))[:60]}，实际 {str(c.get('actual'))[:60]}）"
+                    for c in conflicts[:4])
+                repairs.append({"round": len(repairs) + 1,
+                                "problem": schema_error[:300],
+                                "changedFiles": sorted({c.get("filePath", "") for c in conflicts}),
+                                "outcome": "regenerated"})
+                if not budget.llm_allowed():
+                    return _cpp_task_failed(
+                        task_id, spec, {"instructions": {}}, repairs, [],
+                        f"变更集冲突且预算耗尽：{schema_error[:300]}")
+                state = None
+                continue
+            starter_overlay = {c.path: c.content for c in change_set.starter_changes
+                               if c.operation in ("create", "update")}
+            state = {
+                "reference_files": ref_apply.files,
+                "starter_overlay": starter_overlay,
+                "instructions": change_set.instructions.model_dump(by_alias=True),
+                "manifest": change_set.build_manifest.model_dump(by_alias=True),
+                "hints": [h.model_dump(by_alias=True) for h in change_set.hints],
+            }
+
+        material = _material_from_state(state)
+        # 泄露候选对齐"实际声明挖空"的文件：expectedFiles ∩ starter 变更集——
+        # LLM 把前序已完成文件误列入 expectedFiles 时不误判泄露（挖空证据
+        # 以 starter_changes 为准；那些文件 starter=reference 属正常继承）。
+        declared_impl = set(state["starter_overlay"])
+        expected_files = [p for p in (state["instructions"].get("expectedFiles") or [])
+                          if p in declared_impl] or sorted(declared_impl)
+
+        # ---- 确定性一致性验证（真实 Docker 之前）
+        consistency_errors = validate_material(
+            task_id, state["reference_files"],
+            {**state["reference_files"], **state["starter_overlay"]},
+            state["manifest"], base_files, expected_files)
+        # ---- 防伪守卫（泄露/TODO/测试空转）
+        guard_errors = guard_starter(
+            material["starterFiles"], material["referenceFiles"], material["testFiles"],
+            "cpp", expected_files=expected_files)
+        guard_structured = [{"errorCode": "guard-violation", "filePath": "material",
+                             "expected": "守卫规则", "actual": g[:200],
+                             "suggestedRepairScope": g.split("：")[-1][:120]}
+                            for g in guard_errors]
+
+        if consistency_errors or guard_structured:
+            last_errors = [*consistency_errors, *guard_structured]
+            last_problems = [f"{e.get('errorCode')}: {e.get('actual')}"
+                             for e in last_errors[:4]]
+            if not budget.llm_allowed():
+                return _cpp_task_failed(
+                    task_id, spec, material, repairs, [],
+                    "一致性检查未通过且修复预算耗尽：" + "; ".join(last_problems[:3]))
+            repair = repair_with_agent(
+                provider, spec,
+                classify_failure(last_problems, [e["errorCode"] for e in last_errors]),
+                last_errors, [], state["reference_files"],
+                {"manifest": state["manifest"]}, budget,
+                [r.get("problem", "") for r in repairs])
+            if repair.ok and _apply_repair_patch(repair.patch)[0]:
+                repairs.append({"round": len(repairs) + 1,
+                                "problem": "; ".join(last_problems[:3]),
+                                "changedFiles": [p.get("path") for p in repair.patch],
+                                "outcome": "repaired"})
                 continue
             return _cpp_task_failed(task_id, spec, material, repairs, [],
-                                    "防伪守卫：" + "; ".join(problems[:3]))
+                                    "一致性检查未通过：" + "; ".join(last_problems[:3]))
 
+        # ---- 八步真实验证（复用 P8.1 CMake Runtime）
         verification = verify_cpp_cmake_task(
-            material, cumulative_reference, prior_test_names, is_final=is_final)
+            material, base_files, prior_test_names, is_final=is_final)
+        budget.sandbox_runs += 4  # 估算：discover+ref+starter(+final)
         if verification.passed:
-            manifest = material.get("buildManifest") or {}
+            manifest = state["manifest"]
             new_tests = [n for n in manifest.get("testNames") or []
                          if n not in prior_test_names]
+            registry = [*prior_test_names, *new_tests]
             artifact = {
                 "taskId": task_id,
                 "milestoneId": spec.get("milestoneId", ""),
                 "language": "cpp",
-                "instructions": material.get("instructions")
-                or {"title": spec.get("title", task_id)},
-                "starterFiles": material.get("starterFiles") or [],
-                "testFiles": material.get("testFiles") or [],
+                "instructions": state["instructions"],
+                "starterFiles": material["starterFiles"],
+                "testFiles": material["testFiles"],
                 "buildManifest": manifest,
-                "hints": material.get("hints") or [],
+                "hints": material["hints"],
                 "status": "tests-passed",
                 "verifications": verification.verifications,
                 "repairs": repairs,
                 "error": None,
                 "generationModel": getattr(provider, "name", ""),
             }
+            reference_delta = [
+                {"path": p, "content": c}
+                for p, c in sorted(verification.reference_files.items())
+                if base_files.get(p) != c
+            ]
+            diagnostics = {
+                "repairs": len(repairs), "llmCalls": budget.llm_calls,
+                "tokensUsed": budget.tokens_used,
+                "sandboxRuns": budget.sandbox_runs,
+                "firstAttemptPassed": not repairs,
+            }
+            with _session() as db:
+                _persist_checkpoint(
+                    db, release_id, generation_id, task_seq, task_id,
+                    blueprint_hash, CHANGESET_PROTOCOL, sandbox_image,
+                    "", verification.reference_files, registry,
+                    artifact, reference_delta, verification.verifications, diagnostics)
             return {
-                "passed": True, "error": None,
-                "artifact": artifact,
+                "passed": True, "error": None, "artifact": artifact,
                 "cumulative_reference": verification.reference_files,
-                "prior_test_names": [*prior_test_names, *new_tests],
-                "reference_delta": [{"path": f["path"], "content": f["content"]}
-                                    for f in material.get("referenceFiles") or []],
+                "prior_test_names": registry,
+                "reference_delta": reference_delta,
+                "diagnostics": diagnostics,
             }
 
-        # 修复轮：把八步验证的具体问题（含真实诊断）回灌给生成器
-        detail = verification.problems[:4] + [
+        # ---- 真实验证失败 → 最小补丁修复
+        verify_problems = verification.problems or ["验证未通过"]
+        verify_structured = [{
+            "errorCode": "verification-failure",
+            "filePath": (v.get("kind") or ""),
+            "expected": "真实验证通过",
+            "actual": (v.get("stderr_tail") or "")[:200] or verify_problems[0][:200],
+            "suggestedRepairScope": "tests/CMakeLists.txt",
+        } for v in verification.verifications if v.get("status") == "failed"][:4]
+        diag_messages = [
             f"[{v.get('kind')}] {d.get('message', '')}"
             for v in verification.verifications for d in v.get("diagnostics", [])[:3]
-        ][:8]
-        error_summary = "; ".join(verification.problems[:3]) or "验证未通过"
-        if attempt < MAX_REPAIR_PER_TASK:
-            material = lesson_builder.repair_task_lesson(
-                provider, material,
-                [{"kind": "cmake-verification", "message": p} for p in detail],
-                "cpp")
-            repairs.append({"round": attempt + 1, "problem": error_summary,
-                            "changedFiles": [], "outcome": "still-failing"})
+        ][:10]
+        if not budget.llm_allowed():
+            return _cpp_task_failed(task_id, spec, material, repairs,
+                                    verification.verifications,
+                                    "验证未通过且修复预算耗尽：" + "; ".join(verify_problems[:2]))
+        repair = repair_with_agent(
+            provider, spec,
+            classify_failure(verify_problems + diag_messages),
+            verify_structured or [{"errorCode": "verification-failure",
+                                   "filePath": "", "expected": "通过",
+                                   "actual": verify_problems[0][:200],
+                                   "suggestedRepairScope": "tests/CMakeLists.txt"}],
+            diag_messages or verify_problems,
+            state["reference_files"],
+            {"manifest": state["manifest"]}, budget,
+            [r.get("problem", "") for r in repairs])
+        applied_ok = bool(repair.ok and repair.patch) and _apply_repair_patch(repair.patch)[0]
+        if applied_ok:
+            repairs.append({"round": len(repairs) + 1,
+                            "problem": "; ".join(verify_problems[:3]),
+                            "changedFiles": [p.get("path") for p in repair.patch],
+                            "outcome": "repaired"})
             continue
         return _cpp_task_failed(task_id, spec, material, repairs,
-                                verification.verifications, error_summary)
+                                verification.verifications,
+                                "; ".join(verify_problems[:3]))
 
-    return _cpp_task_failed(task_id, spec, material, repairs, [], "修复轮耗尽")
+    return _cpp_task_failed(task_id, spec, {"instructions": {}}, repairs, [],
+                            "修复预算耗尽")
 
 
 def _cpp_task_failed(task_id: str, spec: dict, material: dict,
                      repairs: list[dict], verifications: list[dict],
                      error: str) -> dict:
+    material = material or {}
     return {
         "passed": False, "error": error,
         "artifact": {
@@ -408,6 +777,7 @@ def _cpp_task_failed(task_id: str, spec: dict, material: dict,
             "generationModel": "",
         },
         "cumulative_reference": {}, "prior_test_names": [], "reference_delta": [],
+        "diagnostics": {"repairs": len(repairs)},
     }
 
 
@@ -498,6 +868,21 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
     ms_titles = {m["milestoneId"]: m["title"] for m in blueprint.get("milestones") or []}
     passed_count = 0
 
+    # ---- P8.2.1：Job 持久化 + Checkpoint 兼容复用（断点续生成）----
+    from app.domains.course_generation.lessons.change_set import CHANGESET_PROTOCOL
+    from app.domains.course_generation.lessons.consistency_validator import (
+        snapshot_hash_of,
+    )
+    blueprint_hash = snapshot_hash_of(
+        {"blueprint": json.dumps(blueprint, sort_keys=True, ensure_ascii=False)})
+    job_id = _start_job(release_id, release.generation_id)
+    reused_tasks: list[str] = []
+    compatible_checkpoints: dict[str, dict] = {}
+    if language == "cpp":
+        compatible_checkpoints = load_compatible_checkpoints(
+            release.generation_id, blueprint_hash, CHANGESET_PROTOCOL,
+            "projectweave-sandbox-cpp:clang15-bookworm", "")
+
     for index, spec in enumerate(order):
         task_id = spec["taskId"]
         _update(release_id, status="verifying", current_task=task_id,
@@ -510,13 +895,30 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
                 evidence[path] = snapshot_files[path]
 
         if language == "cpp":
-            # ---- P8.2：C++/CMake 流水线（八步真实验证 + 有限修复轮）----
+            # ---- P8.2.1：C++ 增量流水线（Checkpoint 复用 → 生成 → 八步验证）----
+            checkpoint = compatible_checkpoints.get(task_id)
+            if checkpoint is not None:
+                # 断点恢复：直接复用已真实验证的任务（不调 LLM）
+                cumulative_reference = checkpoint["snapshot_files"]
+                prior_test_names = checkpoint["test_registry"]
+                reference_store[task_id] = checkpoint["reference_delta"]
+                artifacts_public.append(checkpoint["artifact"])
+                passed_count += 1
+                reused_tasks.append(task_id)
+                _update(release_id, current_task=task_id)
+                continue
+
             outcome = _process_cpp_task(
-                provider, release_id, task_id, spec, order, total,
+                provider, release_id, release.generation_id, blueprint_hash,
+                index, task_id, spec,
                 ms_titles.get(spec.get("milestoneId"), ""),
                 cumulative_reference, prior_test_names, evidence,
                 prior.get(task_id), index == total - 1,
             )
+            _job_update(job_id, current_task=task_id,
+                        completed_task_ids=[a["taskId"] for a in artifacts_public
+                                            if a.get("status") == "tests-passed"],
+                        reused_task_ids=reused_tasks)
             if not outcome["passed"]:
                 artifacts_public.append(outcome["artifact"])
                 _update(release_id, status="failed",
@@ -525,6 +927,8 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
                         progress=100, current_task=task_id,
                         verification_report={"passed": passed_count, "total": total,
                                              "failed_task": task_id})
+                _job_update(job_id, status="failed",
+                            error=f"任务 {task_id} 验证失败：{outcome['error']}")
                 return
             cumulative_reference = outcome["cumulative_reference"]
             prior_test_names = outcome["prior_test_names"]
@@ -719,10 +1123,16 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
             _update(release_id, status="failed",
                     error="最终集成验证未通过（全部 CTest）",
                     artifacts=artifacts_public, verification_report=report, progress=100)
+            _job_update(job_id, status="failed", error="最终集成验证未通过")
             return
         _update(release_id, status="ready", progress=100, current_task=None,
                 artifacts=artifacts_public, reference_store=reference_store,
-                verification_report=report, ready_at=utcnow())
+                verification_report={
+                    **report,
+                    "diagnostics": {"reusedTasks": reused_tasks,
+                                    "llmSavedByReuse": len(reused_tasks)},
+                }, ready_at=utcnow())
+        _job_update(job_id, status="completed", reused_task_ids=reused_tasks)
         return
 
     # python：全部任务测试在最终参考快照上一次通过

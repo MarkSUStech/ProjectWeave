@@ -14,6 +14,7 @@ import {
   getRelease,
   instantiateRelease,
   publishCourseGeneration,
+  resumeRelease,
   retryCourseGeneration,
   STAGE_LABELS,
   TERMINAL_STATUSES,
@@ -149,6 +150,19 @@ export default function CourseGeneratePage() {
       setBusy(false)
     }
   }, [gen])
+
+  // P8.2.1：从最后已验证检查点恢复（新版本；已验证任务不重新生成）
+  const resumeFromCheckpoint = useCallback(async () => {
+    if (!release) return
+    setBusy(true)
+    try {
+      setRelease({ ...(await resumeRelease(release.id)), artifacts: [] })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }, [release])
 
   const startLearning = useCallback(async () => {
     if (!release) return
@@ -491,15 +505,58 @@ export default function CourseGeneratePage() {
             )
           })()}
           {release.status === 'failed' && (
-            <div className="flex items-center gap-3">
-              <Button size="sm" disabled={busy} onClick={() => void startBuildLessons()}>
-                重新生成课程内容（v{release.releaseVersion + 1}）
-              </Button>
-              <span className="text-[11px] text-ink-faint">
-                上次失败的具体原因会反馈给本次生成，AI 将针对性规避
-              </span>
+            <div className="mb-3 rounded border border-edge-soft bg-panel px-2.5 py-2 text-xs">
+              <div className="mb-1 text-ink-dim">
+                已完成任务保留：{release.passedTasks}/{release.totalTasks}
+                {release.passedTasks > 0 && (
+                  <span className="text-ok"> · 恢复时这些任务不会重新生成（零 LLM 消耗）</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                {release.passedTasks > 0 && (
+                  <Button size="sm" disabled={busy} onClick={() => void resumeFromCheckpoint()}>
+                    从检查点恢复（v{release.releaseVersion + 1}）
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => void startBuildLessons()}>
+                  完全重新生成
+                </Button>
+              </div>
             </div>
           )}
+          {release.status === 'ready' && (() => {
+            const diagnostics = (release.verificationReport as Record<string, unknown>)?.diagnostics as
+              { reusedTasks?: string[]; llmSavedByReuse?: number } | undefined
+            if (!diagnostics?.reusedTasks?.length) return null
+            return (
+              <p className="mb-2 text-[11px] text-ok">
+                ✔ 本次生成复用了 {diagnostics.reusedTasks.length} 个已验证检查点（{diagnostics.reusedTasks.join('、')}），未重复调用 AI
+              </p>
+            )
+          })()}
+          {release.status === 'ready' && (() => {
+            const failedArts = release.artifacts.filter(a => a.status === 'tests-passed')
+            if (failedArts.length === 0) return null
+            return (
+              <details className="mb-3 rounded border border-edge-soft bg-panel px-2.5 py-2 text-xs">
+                <summary className="cursor-pointer text-ink-dim">课程验证详情（CMake/CTest 真实执行）</summary>
+                <ul className="mt-2 space-y-2">
+                  {failedArts.flatMap(a => a.verifications.map((v, i) => (
+                    <li key={`${a.taskId}-${i}`} className="flex items-center gap-2">
+                      <span className={v.status === 'passed' ? 'text-ok' : 'text-danger'}>
+                        {v.status === 'passed' ? '✔' : '✘'}
+                      </span>
+                      <span className="text-ink-dim">[{a.taskId} · {v.kind}]</span>
+                      <span className="text-ink-faint">
+                        {v.totalTests > 0 ? `${v.passedTests}/${v.totalTests} 测试` : ''}
+                        {v.note ? ` · ${v.note}` : ''}
+                      </span>
+                    </li>
+                  )))}
+                </ul>
+              </details>
+            )
+          })()}
           {release.status === 'ready' && (
             <div className="flex items-center gap-3">
               <Button size="sm" disabled={busy} onClick={() => void startLearning()}>

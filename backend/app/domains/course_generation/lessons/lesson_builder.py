@@ -103,6 +103,94 @@ CPP_CMAKE_LESSON_SYSTEM_PROMPT = """你是 ProjectWeave 的 C++ 课程内容工�
 7. **中文说明、英文代码与目标名**；hints 的 H1-H3 不含完整代码（H4 允许参考级）；说明字段各 ≤120 字。"""
 
 
+# ---------------------------------------------------------------- P8.2.1 增量生成（D46）
+
+CPP_CHANGESET_SYSTEM_PROMPT = """你是 ProjectWeave 的 C++ 课程内容工程师（增量协议 v1）。
+课程是**同一个持续演化的 CMake 工程**；每个任务你只输出**本任务的文件变更**，
+未修改的文件由服务端从上一任务已验证快照原样继承——绝不重复输出未变化文件。
+
+## 输入
+- TASK：本任务规格
+- PROJECT_CONTEXT：已验证工程的结构化上下文（Manifest ★=已附全文 + 上一任务契约）
+- ENV：C++20 / Clang 15 / CMake ≥3.16 / Ninja / CTest（沙箱，无网络，仅标准库）
+
+## 输出（严格一个 JSON 对象，无其他文本）
+{
+  "taskId": "t2",
+  "baseSnapshotId": "<照抄 PROJECT_CONTEXT 给出的 snapshotId>",
+  "baseSnapshotHash": "<照抄 snapshotHash>",
+  "instructions": {"title": "...", "context": "...", "goal": "...",
+    "requiredConcepts": [], "features": [], "expectedFiles": ["engine/src/Entity.cpp"],
+    "ioBehavior": "...", "constraints": [], "acceptance": [],
+    "relationToPrev": "...", "relationToNext": "..."},
+  "referenceChanges": [{"path": "...", "operation": "create|update|delete",
+    "baseHash": "<update/delete 必填，照抄 Manifest 的 hash>", "content": "完整新文件内容",
+    "reason": "...", "changeCategory": "source|header|cmake|test|documentation"}],
+  "starterChanges": [{"path": "engine/src/Entity.cpp", "operation": "create|update",
+    "baseHash": "...", "content": "挖空版完整文件", "reason": "挖空待实现逻辑",
+    "changeCategory": "source"}],
+  "testChanges": [{"path": "tests/CMakeLists.txt", "operation": "update",
+    "baseHash": "...", "content": "追加新测试注册后的完整文件", "reason": "注册新测试",
+    "changeCategory": "test"},
+    {"path": "tests/test_entity.cpp", "operation": "create", "content": "...",
+     "reason": "新测试", "changeCategory": "test"}],
+  "buildManifest": {"buildTargets": [...], "runTargets": [...], "testNames": [...]},
+  "hints": [{"level": 1, "text": "..."}, ...],
+  "rationale": "本任务变更设计说明"
+}
+
+## 硬性规则
+1. **只列变更文件**：基线已有且不变的文件（如已完成的 World.cpp）绝不出现在任何 changes 里；
+2. **update 的 baseHash 必须照抄** PROJECT_CONTEXT Manifest 中该文件的 hash（这是乐观锁，不匹配直接被拒绝）；
+3. **每个变更给完整新文件内容**（不是 diff）；修改 tests/CMakeLists.txt 时在原有内容基础上追加，原有 add_test 一律保留；
+4. **engine 体系**：engine 静态库（target_include_directories PUBLIC include）；头文件在 include/engine/，实现在 src/；app 可执行 target_link_libraries PRIVATE engine；测试 add_executable + add_test NAME（名字与 buildManifest.testNames 完全一致）；
+5. **starter 挖空**：starterChanges 只覆盖本任务学生要实现的实现文件（.cpp），函数体留 `// TODO: 描述` 或返回默认值；头文件/CMakeLists/前序实现不在 starterChanges 中重复（自动继承参考版）；自检：starter 工程 Configure/编译必须成功，但本任务要求的 CTest 必须真实失败；
+6. **expectedFiles 只列学生要实现核心逻辑的翻译单元**（挖空的 .cpp）——给定文件不要列入（会被防伪守卫判泄露）；
+7. **buildManifest 真实**：buildTargets/testNames 与变更后的 CMakeLists 完全一致（File API/CTest 实际校验）；最终任务 runTargets 填 demo 可执行目标；
+8. **不得删除**前序测试/CMake 注册/已完成实现（delete 受服务端保护）；
+9. **中文说明、英文代码与目标名**；content 中不得包含与任务无关的文本。"""
+
+
+def build_cpp_cmake_changeset(
+    provider, task_spec: dict, milestone_title: str,
+    snapshot_files: dict[str, str],       # 上一任务已验证快照（空 = 首任务）
+    snapshot_id: str, snapshot_hash: str,
+    prev_contract: dict | None = None,
+    extra_instructions: str = "",
+) -> dict:
+    """增量生成：模型只输出本任务 LessonChangeSet（原始 dict，调用方校验）。"""
+    from app.domains.course_generation.lessons.project_context import (
+        build_project_context,
+    )
+
+    is_first = not snapshot_files
+    ctx = build_project_context(snapshot_files, task_spec, prev_contract)
+    header = (
+        f"TASK（里程碑：{milestone_title}）：\n"
+        + json.dumps(task_spec, ensure_ascii=False)[:2600] + "\n\n"
+        + "ENV：C++20 · Clang 15 · CMake/Ninja/CTest · 无网络仅标准库\n"
+        + f"snapshotId: {snapshot_id}\nsnapshotHash: {snapshot_hash}\n\n"
+    )
+    if is_first:
+        context_block = (
+            "PROJECT_CONTEXT：这是课程的第一个任务——工程尚不存在，"
+            "你需要创建根/子目录 CMakeLists、engine 骨架与首批测试"
+            "（全部用 create）。"
+        )
+    else:
+        context_block = "PROJECT_CONTEXT：\n" + ctx.to_prompt()
+        if ctx.truncated:
+            context_block += (
+                f"\n（以下文件因预算未附全文，仅 Manifest 可见：{', '.join(ctx.truncated[:8])}）"
+            )
+    user = header + context_block
+    if extra_instructions:
+        user += f"\n\n附加要求：{extra_instructions}"
+    user += "\n\n请输出本任务的 LessonChangeSet JSON。"
+    content = provider.chat(CPP_CHANGESET_SYSTEM_PROMPT, user[:64000]).content
+    return extract_json_object(content)
+
+
 def build_cpp_cmake_task_lesson(
     provider, task_spec: dict, milestone_title: str,
     prev_reference: dict[str, str],   # path → content（累积参考工程）

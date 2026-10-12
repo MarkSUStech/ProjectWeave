@@ -231,6 +231,7 @@ export const artifactSchema = z.object({
     stdoutTail: z.string().default(''),
     stderrTail: z.string().default(''),
     durationMs: z.number().int().default(0),
+    note: z.string().default(''),
   })).default([]),
   repairs: z.array(z.object({
     round: z.number().int(), problem: z.string(),
@@ -254,6 +255,8 @@ export const releaseSchema = z.object({
   courseTitle: z.string().default(''),
   readyAt: z.string().nullable().default(null),
   createdAt: z.string(),
+  // P8.2.1：验证汇总（failed_task / finalIntegration / diagnostics.reusedTasks）
+  verificationReport: z.record(z.string(), z.unknown()).default({}),
 })
 
 export const releaseDetailSchema = releaseSchema.extend({
@@ -263,6 +266,23 @@ export const releaseDetailSchema = releaseSchema.extend({
 export type CourseRelease = z.infer<typeof releaseSchema>
 export type ReleaseDetail = z.infer<typeof releaseDetailSchema>
 export type LessonArtifact = z.infer<typeof artifactSchema>
+
+/** P8.2.1：从最后已验证检查点继续（新版本；已验证任务零 LLM 复用）。 */
+export async function resumeRelease(id: string): Promise<CourseRelease> {
+  return releaseSchema.parse(await api.post<unknown>(`/course-releases/${id}/resume`))
+}
+
+export async function getCheckpoints(id: string): Promise<
+  Array<{ taskId: string; taskSeq: number; testNames: string[]; verifiedAt: string; protocolVersion: string }>
+> {
+  const data = await api.get<unknown>(`/course-releases/${id}/checkpoints`)
+  return z.array(z.object({
+    taskId: z.string(), taskSeq: z.number().int(),
+    testNames: z.array(z.string()).default([]),
+    verifiedAt: z.string().default(''),
+    protocolVersion: z.string().default(''),
+  })).parse(data)
+}
 
 export async function buildLessons(generationId: string): Promise<CourseRelease> {
   return releaseSchema.parse(await api.post<unknown>(

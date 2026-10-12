@@ -152,6 +152,7 @@ def _release_read(row) -> ReleaseRead:
         progress=row.progress, current_task=row.current_task,
         error=row.error, course_title=row.course_title,
         ready_at=row.ready_at, created_at=row.created_at,
+        verification_report=row.verification_report or {},
     )
 
 
@@ -195,6 +196,50 @@ def get_release(release_id: str, db: Session = Depends(get_db)) -> ReleaseDetail
     base = _release_read(row)
     return ReleaseDetailRead(**base.model_dump(),
                              artifacts=[_public_artifact(a) for a in (row.artifacts or [])])
+
+
+@releases_router.get("/{release_id}/checkpoints")
+def list_checkpoints(release_id: str, db: Session = Depends(get_db)) -> list[dict]:
+    """已验证检查点（公开信息：任务/序号/测试注册/时间——不含参考快照）。"""
+    from sqlalchemy import select as _select
+
+    from app.domains.course_generation.models import CourseCheckpoint
+
+    try:
+        release = lesson_publisher.get_release(db, _parse_id(release_id))
+    except lesson_publisher.ReleaseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    rows = db.scalars(_select(CourseCheckpoint).where(
+        CourseCheckpoint.generation_id == release.generation_id
+    ).order_by(CourseCheckpoint.task_seq))
+    return [{
+        "taskId": r.task_id, "taskSeq": r.task_seq,
+        "testNames": list((r.artifact or {}).get("buildManifest", {}).get("testNames", [])),
+        "verifiedAt": r.created_at.isoformat() if r.created_at else "",
+        "protocolVersion": r.protocol_version,
+    } for r in rows]
+
+
+@releases_router.post("/{release_id}/resume", response_model=ReleaseRead, status_code=202)
+def resume_release(release_id: str, db: Session = Depends(get_db)) -> ReleaseRead:
+    """从最后一个已验证检查点继续：新建 release 版本（不覆盖旧版），
+    已验证任务直接复用（不调 LLM），仅重新生成失败任务起的剩余部分。"""
+    try:
+        release = lesson_publisher.get_release(db, _parse_id(release_id))
+        if release.status == "ready":
+            raise HTTPException(status_code=422, detail="该版本已就绪，无需恢复")
+        if release.language != "cpp":
+            raise HTTPException(status_code=422, detail="仅 C++ 课程支持检查点恢复")
+        row = lesson_publisher.build_lessons(db, str(release.generation_id))
+    except lesson_publisher.ReleaseError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    return _release_read(row)
+
+
+@releases_router.post("/{release_id}/tasks/{task_id}/retry", response_model=ReleaseRead, status_code=202)
+def retry_task(release_id: str, task_id: str, db: Session = Depends(get_db)) -> ReleaseRead:
+    """单任务重试 = 从检查点恢复（该任务之前的已验证任务全部复用）。"""
+    return resume_release(release_id, db)
 
 
 @releases_router.post("/{release_id}/instantiate", response_model=InstantiateResponse, status_code=201)

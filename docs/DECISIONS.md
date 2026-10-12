@@ -652,3 +652,24 @@
 - **验收协议**：cmake 任务的验收单位是 CTest 名与目标名，绝不把测试名冒充 .cpp 路径；前端 TaskPanel 按 verification 路由到 cmakeTestInTerminal。
 
 **E2E**：`test_cpp_course_generation_e2e.py`——Mock LLM 世界模拟引擎三任务演化工程全链（真 Docker）：生成→八步验证→ready→实例化→逐任务激活/解题/服务端验收（starter 态必失败、实现后通过、回归保持）→最终报告；参考实现与 H4 全程隔离。真实 DeepSeek 版门控（PW_COURSE_E2E）。
+
+## D46 · P8.2.1 增量课程生成引擎：ChangeSet 协议 + 确定性合成 + 检查点恢复
+
+**日期**：2026-10-12。
+
+**背景**：P8.2 真实 E2E 显示 t1/t2 稳定通过而 t3 反复因材料一致性被拒。根因是**全量再生成协议**：t3 要求 LLM 重输出 ~20 个文件，而上下文截断（前 14 文件 × 2200 字符）恰好截掉 tests/CMakeLists/engine CMakeLists 等关键演进文件；修复轮同样整包重生成，无法收敛。无限加提示词被明确排除。
+
+**决策**：
+
+- **LessonChangeSet 协议**（`change_set.py`）：模型只输出本任务的 create/update/delete 文件变更（每条为完整新内容 + baseHash 乐观锁 + reason + changeCategory）+ buildManifest + instructions；未修改文件由服务端从已验证快照继承。`CHANGESET_PROTOCOL="cpp-changeset-v1"` 参与检查点兼容性判定。
+- **确定性应用器**（`change_applier.py`）：路径校验（禁穿越/绝对/保留前缀）、create 不可已存在、update/delete 必须匹配 baseHash、同路径禁止重复操作、tests/CMake 注册删除受保护、原子性（冲突即整体失败不改基线）、starter 挖空的 create-on-existing 规范化为对参考版的 update。
+- **工程上下文构建器**（`project_context.py`）：全量 Manifest（路径/分类/hash/大小/模块）+ 相关性评分选取关键文件**全文**（预算内整文件进/出，超预算整文件降级为 Manifest 条目并记录 truncated）+ 头文件接口启发式摘要（显式 `[partial]` 标记可信度）+ 上一任务已验证契约。替代字母序截断。
+- **一致性验证器**（`consistency_validator.py`）：真实 Docker 前的确定性检查——include 存在性、add_test/add_executable/add_library 注册与 buildManifest 一致、前序测试注册/文件不可静默丢失、starter 挖空与泄露、测试源关联。结构化错误 {errorCode, filePath, expected, actual, suggestedRepairScope}。CMake 语义最终仍由真实 Configure/File API/CTest 裁决。
+- **CppCMakeRepairAgent**（`cpp_repair_agent.py`）：先确定性分类（12 类失败），LLM 只输出**最小 FileChange 补丁**（附相关文件当前 baseHash）；铁律：不删测试/不弱化断言/不因找不到测试删 manifest/不补全 starter。预算（LLM 次数/Token/沙箱次数）硬上限。
+- **Verifier 收紧**：starter 预期失败必须是**真实执行且断言失败**（status=failed）；skipped/Not Run/未发现/构建失败/配置失败均非合格 starter（未发现单列"注册/命名不一致"）。
+- **Checkpoint**（`course_checkpoints` 表）：任务真实验证通过后固化累积参考快照 + 测试注册表 + artifact + 证据 + 度量；兼容性 = blueprint 哈希 + 协议版本 + 沙箱镜像 + 源 commit；快照含参考实现——服务端受保护，普通 API 只出公开信息。
+- **Resume**：`POST /course-releases/{id}/resume|tasks/{id}/retry` 新建 release 版本（不可变语义保留），worker 按 task_seq 连续前缀复用检查点（已验证任务零 LLM）；`GET /checkpoints` 公开列表。
+- **GenerationJob**（`generation_jobs` 表）：持久化 job 状态/当前任务/完成与复用任务/错误/retry/lease；服务重启将 running 标记 interrupted 等待显式 resume。
+- **度量**：artifact.repairs.changedFiles 记录真实修改文件（不再空占位）；release.verificationReport.diagnostics 记录 reusedTasks/llmSavedByReuse；checkpoint.diagnostics 记录每任务修复轮/LLM 调用/Token/沙箱次数/一次通过。
+
+**验证**：后端 340 全过（+19 单测：applier 原子性/冲突/保护删除、context 相关性与预算、consistency 六类、repair 分类与预算、changeset schema）；Mock ChangeSet 学生旅程 E2E 与**断点恢复 E2E（验收 D）**全过——恢复时 provider 调用序列恰为 ["build:t3"]（t1/t2 零 LLM）；前端 284 全过。

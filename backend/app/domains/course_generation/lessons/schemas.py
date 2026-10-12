@@ -53,6 +53,8 @@ class SandboxVerification(APIModel):
 
     kind: str  # reference-tests | regression | starter-expected-fail | final-integration
     status: str  # passed | failed | error | skipped
+    # P8.2.1：人类可读佐证（如 starter 预期失败的具体测试名）
+    note: str = ""
     exit_code: int | None = None
     total_tests: int = 0
     passed_tests: int = 0
@@ -146,6 +148,8 @@ class ReleaseRead(APIModel):
     course_title: str = ""
     ready_at: datetime | None = None
     created_at: datetime
+    # P8.2.1：验证汇总（最终集成/诊断/检查点复用信息；不含参考实现）
+    verification_report: dict = Field(default_factory=dict)
 
 
 class ReleaseDetailRead(ReleaseRead):

@@ -71,6 +71,12 @@
 | 7.3 | 学生学习生命周期（任务激活/安全合并/最终验收） | 7.2 | ✅（D43） |
 | 7.4 | C++/TS 课程内容 + Micrograd 学生旅程 E2E + 效果分析 | 7.3 | ⏳ 计划 |
 
+## P8.2.1 增量课程生成引擎（已完成，D46）
+
+ChangeSet 协议（模型只出增量）+ 确定性合成 + 工程上下文构建器（替代截断）+
+一致性验证器 + CppCMakeRepairAgent（最小补丁）+ 检查点/断点恢复 + Job 持久化。
+E2E：`tests/test_cpp_course_generation_e2e.py`（Mock 旅程 + 断点恢复验收 D + 真实 DeepSeek 门控）。
+
 ## P8.1.1 + P8.2 C++ AI Course Builder（已完成，D45）
 
 CTest 选择执行语义修复（POSIX ERE 锚点/未选择不判/未知报错/requiredMissing）；

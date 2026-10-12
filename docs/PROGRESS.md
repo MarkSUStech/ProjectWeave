@@ -684,3 +684,45 @@
       工程→八步验证→ready→实例化→激活/解题/服务端验收（starter 必失败、
       实现后过、回归保持）→最终报告；参考实现/H4 API 隔离）；4 个 Docker
       套件 31 用例全过无回归
+
+### P8.2.1 增量课程生成引擎（D46）
+
+**根因**（上轮 5 次真实运行诊断）：全量再生成 + 上下文截断（14 文件×2200 字符）
+→ t3 一致性缺陷三类模式；修复轮整包重生成无法收敛。
+
+- [x] **LessonChangeSet 协议 + 确定性应用器**：模型只出本任务文件变更
+      （完整内容 + baseHash 乐观锁）；未改文件服务端继承；原子/防穿越/
+      防重复/保护删除；starter 挖空 create-on-existing 规范化
+- [x] **工程上下文构建器**：全量 Manifest + 相关性选取关键文件全文
+      （预算硬上限，整进整出）+ [partial] 摘要 + 上任务契约——替代截断
+- [x] **增量 Builder**（`build_cpp_cmake_changeset`）：增量协议 v1 提示词
+      （照抄 baseHash/追加注册不删旧/expectedFiles 只列挖空 TU）
+- [x] **一致性验证器**：include/注册/回归保护/starter 挖空与泄露的结构化
+      错误（errorCode/filePath/expected/actual/suggestedRepairScope）
+- [x] **CppCMakeRepairAgent**：12 类失败确定性分类 + 最小补丁协议
+      （不删测试/不弱化断言/不删 manifest）+ LLM/Token/沙箱预算
+- [x] **Verifier 收紧**：starter 预期失败 = 真实执行且断言失败；
+      Not Run/未发现/构建失败均非合格（未发现单列诊断）
+- [x] **Checkpoint + Resume**：course_checkpoints/generation_jobs 表
+      （迁移 bb22ce8a7741）；任务通过即固化快照+注册表；resume 新建版本
+      复用连续前缀检查点（零 LLM）；restart→interrupted；释放
+      verificationReport.diagnostics（reusedTasks）
+- [x] **API**：GET /course-releases/{id}/checkpoints、POST .../resume、
+      POST .../tasks/{taskId}/retry；ReleaseRead 增 verificationReport；
+      SandboxVerification 增 note（starter 预期失败的具体测试名）
+- [x] **前端**：失败卡片 = 已完成任务保留提示 + 从检查点恢复按钮 +
+      完全重新生成；ready 卡片 = 检查点复用徽标 + 课程验证详情
+      （CMake/CTest 逐步骤 ✔/✘ + 测试计数）
+- [x] 验证：后端 **340 全过**（+19 新模块单测）；前端 **284 全过**；
+      Mock 旅程 E2E + **断点恢复 E2E（验收 D）**全过——恢复时
+      provider.calls == ["build:t3"]（t1/t2 零 LLM）、旧 release 不可变、
+      学生旅程在 v2 上完整通过；真实 DeepSeek E2E 见下方运行记录
+
+**P8.2.1 真实 DeepSeek 运行记录（12 轮，如实）**：t1/t2 **每轮稳定通过**
+（增量 ChangeSet + 真实 CMake/CTest 八步验证 + 检查点固化）；t3 失败点
+逐轮收敛（泄露→测试空断言→注册缺失→include 路径→starter 覆盖），每轮
+修复一类真实缺陷并沉淀为确定性防线（预算记账/组间去重/哈希宽容/泄露
+对齐/starter 补丁目标/测试基础设施放行/前序测试保护/空补丁拒绝/预算 5 轮），
+但 5 轮修复预算内 t3 尚未全部收敛——**验收 A/B/C 的三任务连续 ready 未
+达成**（Mock 全链与验收 D/E 已过）。下一步：deepseek-reasoner 或 t3 拆分
+为两个较小任务（引擎侧集成 + app/demo）。

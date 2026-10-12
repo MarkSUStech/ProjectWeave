@@ -310,8 +310,10 @@ def _cpp_test_problems(test_files: list[dict]) -> list[str]:
     for f in test_files:
         path, code = f.get("path", ""), f.get("content", "") or ""
         if not path.lower().endswith((".cpp", ".cc", ".cxx")):
-            if path.lower().endswith((".txt", ".cmake")) and "cmakelists" in path.lower():
-                continue  # 测试注册脚本（add_test），合法
+            lower = path.lower()
+            if ("cmakelists" in lower
+                    or (lower.startswith("tests/") and lower.endswith(".cmake"))):
+                continue  # 测试注册/测试基础设施脚本（add_test 与辅助 .cmake），合法
             problems.append(f"{path}: C++ 测试须为 .cpp/.cc 源文件或 CMakeLists 注册")
             continue
         cpp_test_sources += 1
@@ -603,24 +605,40 @@ def verify_cpp_cmake_task(
         return result
 
     build_phase = next((p for p in starter_run.phases if p.get("name") == "build"), {})
-    required_failed = [t for t in starter_run.test_results or []
-                       if t.get("path") in set(test_names)
-                       and t.get("status") in ("failed", "error", "skipped")]
+    required_map = {t.get("path"): t for t in starter_run.test_results or []
+                    if t.get("path") in set(test_names)}
+    # 严格语义（D46）：只有**真实执行且断言失败**（status=failed）算有效教学失败；
+    # skipped / Not Run / 未发现 / 构建失败 / 配置失败都不是合格 starter。
+    real_failures = sorted(n for n, t in required_map.items()
+                           if t.get("status") == "failed")
+    not_executed = sorted(n for n in test_names
+                          if n not in required_map
+                          or required_map[n].get("status") in ("skipped", "error"))
     if build_phase.get("status") == "failed":
         starter_record["status"] = "failed"
-        result.problems.append(
-            "starter 工程无法构建（坏工程不是合格 starter）："
-            + "；".join(d.get("message", "") for d in starter_run.diagnostics[:3]))
+        diag = "；".join(d.get("message", "") for d in starter_run.diagnostics[:3])
+        if "选择的测试不存在" in diag or "未执行任何已发现" in diag:
+            result.problems.append(
+                f"starter 工程未发现要求的测试（注册/命名不一致）：{diag}")
+        else:
+            result.problems.append(
+                "starter 工程无法构建（坏工程不是合格 starter）：" + diag)
         result.verifications.append(starter_record)
         return result
-    if not required_failed:
+    if not_executed:
+        starter_record["status"] = "failed"
+        result.problems.append(
+            f"要求的测试未真实执行（Not Run/禁用/未发现，不算预期失败）：{not_executed}")
+        result.verifications.append(starter_record)
+        return result
+    if not real_failures:
         starter_record["status"] = "failed"
         result.problems.append(
             "starter 上全部要求测试通过——测试未覆盖待实现功能（疑似泄露/空转）")
         result.verifications.append(starter_record)
         return result
     starter_record["status"] = "passed"
-    starter_record["note"] = f"预期失败：{[t.get('path') for t in required_failed]}"
+    starter_record["note"] = f"真实断言失败（预期）：{real_failures}"
     result.verifications.append(starter_record)
 
     # ---- Step 8：最终集成（全量测试 + demo 运行）

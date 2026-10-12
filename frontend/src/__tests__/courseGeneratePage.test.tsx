@@ -177,10 +177,12 @@ describe('CourseGeneratePage', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy(), { timeout: 8000 })
     expect(screen.getByText(/修复尝试记录/)).toBeTruthy()
     expect(screen.getByText(/防伪守卫：starter 缺少有效 TODO 标记/)).toBeTruthy()
-    expect(screen.getByText(/重新生成课程内容（v2）/)).toBeTruthy()
-    expect(screen.getByText(/上次失败的具体原因会反馈给本次生成/)).toBeTruthy()
+    expect(screen.getByText('完全重新生成')).toBeTruthy()
+    // passedTasks=3 > 0 → 检查点恢复入口出现
+    expect(screen.getByText(/从检查点恢复（v2）/)).toBeTruthy()
+    expect(screen.getByText(/这些任务不会重新生成/)).toBeTruthy()
 
-    fireEvent.click(screen.getByText(/重新生成课程内容（v2）/))
+    fireEvent.click(screen.getByText('完全重新生成'))
     await waitFor(() => expect(builds).toBe(2), { timeout: 3000 })
   }, 20000)
 
