@@ -46,6 +46,8 @@ class PlanTaskRead(APIModel):
     test_files: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
+    # P8.2：任务验收契约（cmake 任务按目标/CTest 名验收；空 = 旧 testFiles 语义）
+    verification: dict | None = None
 
 
 class PlanDetailRead(APIModel):

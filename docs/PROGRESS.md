@@ -650,3 +650,37 @@
       发现执行、故意失败显示 failed、编译错误行号、configure/build 错误
       区分、无遗留容器、目标选择执行）+ 旧 C++ **13/13** + LLDB **6/6**
       不回归
+
+### P8.1.1 CTest 选择执行修复 + P8.2 C++ AI Course Builder（D45）
+
+**P8.1.1 修复**（ctest -R 为 POSIX ERE 的实测发现）：
+- [x] `-R` 全锚点 `^(a|b)$`（`(?:)` 不被 ERE 支持且 ctest 编译失败仍退出 0——
+      已加"发现非空却 0 执行"显式报错防线）；`test_world` 不再误匹配 `test_world_extra`
+- [x] 通过条件只覆盖本次要求执行的测试（选择=选中项；全量=全部发现）；
+      未选择的 skipped（"未在本次选择范围"）不影响成功
+- [x] 显式选择的测试不存在 → 明确报错并列出实际发现（不静默）
+- [x] 要求执行的 Not Run/DISABLED/JUnit skipped → 不判通过（requiredMissing）
+- [x] E2E +2：未知测试名报错、前缀不误运行（fixture 增 test_world_extra）
+
+**P8.2**：
+- [x] **执行档案**：`execution_profile.py` 评分式语言判定（混合仓库不误判）+
+      VERIFIED_PROFILES 门控 + 外部依赖检测；build_lessons 接入（cpp/cmake 解禁）
+- [x] **CppCMakeLessonBuilder**：分语言提示词（演化工程/engine 库/头实现分离/
+      add_test/buildManifest 真实声明/无 pytest）；与 Python 共享修复流程
+- [x] **CppCMakeCourseVerifier 八步**（复用 P8.1 Runner）：守卫（expectedFiles
+      精确泄露判定 + CMakeLists 认可为测试注册）→ Configure → File API 目标
+      校验 → 构建+参考测试（∪回归）→ starter 预期失败（坏工程拒绝；
+      expectedFailurePhase 仅限修复构建类任务）→ final：全量 CTest + demo 运行
+- [x] **流水线接入**：`_process_cpp_task`（有限修复轮 + 真实诊断回灌 +
+      PRIOR_FAILURES）；最终集成在末任务验证内完成（python 尾部逻辑跳过）
+- [x] **生命周期**：ProjectTask.verification 列（迁移 425f18ba32e6）+
+      instantiate 写入 + `evaluate_task_cmake`（服务端读学生工程直接跑 CTest，
+      不信客户端；回归=已完成任务 testNames 并集）+ evaluate 路由分发
+- [x] **前端**：plan 契约 verification；TaskPanel→cmakeTestInTerminal(testNames)
+      路由；CmakeOutcome 暴露逐测试结果；测试状态含 skipped
+- [x] 验证：后端 **321 全过**（+11：泄露精确判定×2/注册脚本/验证器失败路径×4/
+      回归并入/生成器契约/无测试拒绝 + 执行档案 5）；前端 **282 全过**；
+      **真实 Docker E2E**：Mock LLM 世界引擎学生旅程全链通过（3 任务演化
+      工程→八步验证→ready→实例化→激活/解题/服务端验收（starter 必失败、
+      实现后过、回归保持）→最终报告；参考实现/H4 API 隔离）；4 个 Docker
+      套件 31 用例全过无回归

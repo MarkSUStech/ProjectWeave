@@ -70,6 +70,23 @@ class RepairRecord(APIModel):
     outcome: str           # fixed | still-failing
 
 
+class CmakeBuildManifest(APIModel):
+    """CMake 任务的构建清单（P8.2，D45）：验证与验收的权威契约。
+
+    目标/测试名必须由真实 CMake File API / CTest 发现结果证实——
+    生成器只声明意图，验证器负责校验存在性。
+    """
+
+    build_targets: list[str] = Field(default_factory=list)   # 本任务需构建的目标
+    run_targets: list[str] = Field(default_factory=list)     # 需真实运行的目标（demo）
+    test_names: list[str] = Field(default_factory=list)      # 要求通过的 CTest 测试名
+    # 仅"修复构建"类教学任务允许声明预期失败阶段（configure|build），
+    # 并附预期诊断关键词；普通功能任务为 None。
+    expected_failure_phase: str | None = Field(default=None,
+                                               pattern="^(configure|build|test)$")
+    expected_failure_keywords: list[str] = Field(default_factory=list)
+
+
 class LessonArtifact(APIModel):
     """一个任务的可执行教学材料（参考实现受保护，不下发前端）。"""
 
@@ -82,6 +99,8 @@ class LessonArtifact(APIModel):
     # 服务端受保护：绝不进入普通 API 响应/项目文件
     reference_files: list[CodeFile] = Field(default_factory=list)
     hints: list[HintSpec] = Field(default_factory=list)
+    # P8.2：CMake 任务的构建清单（Python 课程为 None）
+    build_manifest: CmakeBuildManifest | None = None
     # 验证元数据
     artifact_version: int = 1
     status: str = Field(default="generated", pattern="^(" + "|".join(TASK_BUILD_STATUSES) + ")$")
@@ -105,6 +124,7 @@ class ArtifactPublicRead(APIModel):
     starter_files: list[CodeFile]
     test_files: list[CodeFile]
     hints: list[HintSpec]  # 服务端剥离 H4 后下发（H4 走 Tutor Gate）
+    build_manifest: CmakeBuildManifest | None = None
     status: str
     verifications: list[SandboxVerification]
     repairs: list[RepairRecord]

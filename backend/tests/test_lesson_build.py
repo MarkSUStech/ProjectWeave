@@ -545,7 +545,8 @@ def test_prior_failures_unit(db_session):
 
 
 def test_build_lessons_rejects_unsupported_language(client: TestClient, build_env, db_session):
-    """cpp 课程：提前 422 拒绝——不创建 release、不消耗 LLM 调用、明确报告限制。"""
+    """未验证语言组合（P8.2 起 C++/CMake 已支持 → 用 TypeScript 验证拒绝路径）：
+    提前 422——不创建 release、不消耗 LLM 调用、明确报告限制。"""
     import uuid as _uuid
 
     from app.domains.course_generation.models import CourseGeneration, CourseRelease
@@ -554,8 +555,8 @@ def test_build_lessons_rejects_unsupported_language(client: TestClient, build_en
     row = db_session.get(CourseGeneration, _uuid.UUID(gen_id))
     bp = dict(row.blueprint or {})
     project = dict(bp.get("project") or {})
-    project["tech_stack"] = ["C++"]   # detect_language 读取 snake 键
-    project["techStack"] = ["C++"]
+    project["tech_stack"] = ["TypeScript", "React"]
+    project["techStack"] = ["TypeScript", "React"]
     bp["project"] = project
     row.blueprint = bp
     db_session.commit()
@@ -572,6 +573,6 @@ def test_build_lessons_rejects_unsupported_language(client: TestClient, build_en
 
     resp = client.post(f"/api/v1/course-generations/{gen_id}/build-lessons")
     assert resp.status_code == 422, resp.text
-    assert "暂不支持 cpp" in resp.json()["detail"]
+    assert "暂不支持 typescript" in resp.json()["detail"]
     assert db_session.query(CourseRelease).count() == 0   # 无 release 行
     assert calls == []                                     # 零 LLM 调用

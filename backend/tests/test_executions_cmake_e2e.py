@@ -146,21 +146,35 @@ def test_fg_ctest_discovers_and_runs(e2e_client: TestClient):
     assert final["exitCode"] != 0  # test_terrain 失败 → 整体非零
     by_name = {r["path"]: r for r in final["testResults"]}
     assert by_name["test_world"]["status"] == "passed"
+    assert by_name["test_world_extra"]["status"] == "passed"
     assert by_name["test_terrain"]["status"] == "failed"
     assert "99.0" in (by_name["test_terrain"]["error"] or "")
-    assert set(final["cmake"]["discoveredTests"]) >= {"test_world", "test_terrain"}
+    assert set(final["cmake"]["discoveredTests"]) >= {"test_world", "test_terrain", "test_world_extra"}
 
 
 def test_selected_tests_run_only_selection(e2e_client: TestClient):
-    """只执行选择的测试：test_world 单独运行通过。"""
+    """选择执行：仅选中项作为通过条件；未选择项 skipped 不影响；前缀不误匹配。"""
     final = _wait(e2e_client, _create(
         e2e_client, mode="test", testPaths=[], selectedTests=["test_world"]))
     assert final["status"] == "completed", final["error"]
+    assert final["exitCode"] == 0  # 选择执行真实通过（P8.1.1 修复点）
     executed = {r["path"] for r in final["testResults"] if r["status"] != "skipped"}
+    # 全锚点 -R：test_world 不得误运行前缀测试 test_world_extra
     assert executed == {"test_world"}
-    # 未选择的测试如实标记 skipped（Not Run），不伪装通过也不消失
     skipped = {r["path"] for r in final["testResults"] if r["status"] == "skipped"}
-    assert skipped == {"test_terrain"}
+    assert skipped == {"test_terrain", "test_world_extra"}
+    assert all("选择范围" in (r["error"] or "") for r in final["testResults"]
+               if r["status"] == "skipped")
+
+
+def test_selected_unknown_test_reports_error(e2e_client: TestClient):
+    """显式选择的测试不存在 → 明确报错并列出实际发现（不静默）。"""
+    final = _wait(e2e_client, _create(
+        e2e_client, mode="test", testPaths=[], selectedTests=["no_such_test"]))
+    assert final["exitCode"] == 2
+    messages = " ".join(d["message"] for d in final["diagnostics"])
+    assert "选择的测试不存在" in messages
+    assert "no_such_test" in messages and "test_world" in messages
 
 
 def test_h_compile_error_reports_file_and_line(e2e_client: TestClient):

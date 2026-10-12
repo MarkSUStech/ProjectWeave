@@ -21,12 +21,16 @@ from app.agents.schemas import extract_json_object  # noqa: F401
 from app.domains.course_generation.lessons import lesson_builder
 from app.domains.course_generation.lessons.schemas import LessonArtifact
 from app.domains.course_generation.models import CourseGeneration, CourseRelease
+from app.domains.course_generation.execution_profile import (
+    derive_execution_profile,
+    unsupported_profile_message,
+)
 from app.domains.course_generation.validation.blueprint_validator import _has_cycle
 from app.domains.course_generation.verification.course_verifier import (
-    SANDBOX_VERIFIED_LANGUAGES,
     guard_starter,
     merge_files,
     run_in_sandbox,
+    verify_cpp_cmake_task,
 )
 
 MAX_REPAIR_PER_TASK = 3
@@ -34,7 +38,7 @@ MAX_REPAIR_PER_TASK = 3
 
 def unsupported_language_message(language: str) -> str:
     """无真实沙箱验证器的语言：如实拒绝（不烧 LLM、不伪装成功）。"""
-    return (f"暂不支持 {language} 课程的沙箱验证（当前仅支持 Python：真实 Docker + pytest 全链验证）。"
+    return (f"暂不支持 {language} 课程的沙箱验证（当前支持 Python/pytest 与 C++/CMake 真实全链验证）。"
             "为不伪造成功，已拒绝生成课程内容；蓝图已保留，待该语言验证器上线后可重试。")
 
 
@@ -88,10 +92,11 @@ def build_lessons(db: Session, generation_id) -> CourseRelease:
         raise ReleaseError("生成任务不存在", 404)
     if gen.blueprint is None or gen.status not in ("published", "draft"):
         raise ReleaseError("蓝图未就绪（需先完成蓝图生成与验证）")
-    language = lesson_builder.detect_language(gen.blueprint)
-    if language not in SANDBOX_VERIFIED_LANGUAGES:
+    profile = derive_execution_profile(gen.blueprint)
+    language = profile["primaryLanguage"]
+    if not profile["verified"]:
         # 提前拒绝：不做任何 LLM 生成/修复尝试，不产生注定失败的 release
-        raise ReleaseError(unsupported_language_message(language), 422)
+        raise ReleaseError(unsupported_profile_message(profile), 422)
     version = 1 + len(list(db.scalars(
         select(CourseRelease.id).where(CourseRelease.generation_id == gen.id)
     )))
@@ -187,11 +192,21 @@ def instantiate_project(db: Session, release_id, title: str | None = None) -> di
     for path, content in files.items():
         db.add(ProjectFile(project_id=project.id, path=path, content=content))
 
-    # 种子任务（全部任务入图；测试文件路径绑定）
+    # 种子任务（全部任务入图；测试文件路径绑定 + P8.2 CMake 验收契约）
     ms_order = {m["milestoneId"]: i + 1 for i, m in enumerate(blueprint.get("milestones") or [])}
     first_task_row = None
     for spec in order:
         artifact = by_task.get(spec["taskId"])
+        manifest = ((artifact or {}).get("buildManifest")
+                    or (artifact or {}).get("build_manifest") or {})
+        verification = None
+        if manifest.get("testNames") or manifest.get("buildTargets"):
+            verification = {
+                "buildSystem": "cmake",
+                "buildTargets": manifest.get("buildTargets") or [],
+                "testNames": manifest.get("testNames") or [],
+                "verificationProfile": "ctest",
+            }
         task_row = ProjectTask(
             project_id=project.id,
             task_id=spec["taskId"],
@@ -206,6 +221,7 @@ def instantiate_project(db: Session, release_id, title: str | None = None) -> di
             acceptance_criteria=spec.get("acceptanceCriteria") or [],
             hints=(artifact or {}).get("hints") or [],
             viz_suggestion="",
+            verification=verification,
         )
         db.add(task_row)
         if first and spec["taskId"] == first["taskId"]:
@@ -271,6 +287,128 @@ def _run_build(release_id: uuid.UUID) -> None:
         _run_build_inner(release_id)
     except Exception as exc:
         _update(release_id, status="failed", error=f"课程内容生产内部错误：{exc}")
+
+
+def _process_cpp_task(
+    provider, release_id, task_id: str, spec: dict, order: list, total: int,
+    milestone_title: str, cumulative_reference: dict[str, str],
+    prior_test_names: list[str], evidence: dict[str, str],
+    prior_failures: list[str] | None, is_final: bool,
+) -> dict:
+    """P8.2：单个 C++/CMake 任务——生成 → 守卫 → 八步真实验证 → 有限修复。
+
+    返回 {passed, error, artifact, cumulative_reference, prior_test_names,
+    reference_delta}；artifact 已按公开契约（camelCase）组装。
+    """
+    repairs: list[dict] = []
+    _update(release_id, status="verifying", current_task=task_id)
+
+    material = lesson_builder.build_cpp_cmake_task_lesson(
+        provider, spec, milestone_title, cumulative_reference, evidence)
+    # 重试上下文注入（上一版 release 的失败原因）
+    if prior_failures:
+        material = lesson_builder.repair_task_lesson(
+            provider, material,
+            [{"kind": "prior-failure", "message": p} for p in prior_failures],
+            "cpp")
+
+    for attempt in range(MAX_REPAIR_PER_TASK + 1):
+        problems = guard_starter(
+            material.get("starterFiles") or [],
+            material.get("referenceFiles") or [],
+            material.get("testFiles") or [],
+            "cpp",
+            expected_files=(material.get("instructions") or {}).get("expectedFiles"),
+        )
+        if problems:
+            if attempt < MAX_REPAIR_PER_TASK:
+                material = lesson_builder.repair_task_lesson(
+                    provider, material,
+                    [{"kind": "guard", "message": p} for p in problems]
+                    + [{"kind": "material-context", "message":
+                        "当前生成的文件清单与摘要：\n" + _material_context(material)}],
+                    "cpp")
+                repairs.append({"round": attempt + 1,
+                                "problem": "防伪守卫：" + "; ".join(problems[:3]),
+                                "changedFiles": [], "outcome": "still-failing"})
+                continue
+            return _cpp_task_failed(task_id, spec, material, repairs, [],
+                                    "防伪守卫：" + "; ".join(problems[:3]))
+
+        verification = verify_cpp_cmake_task(
+            material, cumulative_reference, prior_test_names, is_final=is_final)
+        if verification.passed:
+            manifest = material.get("buildManifest") or {}
+            new_tests = [n for n in manifest.get("testNames") or []
+                         if n not in prior_test_names]
+            artifact = {
+                "taskId": task_id,
+                "milestoneId": spec.get("milestoneId", ""),
+                "language": "cpp",
+                "instructions": material.get("instructions")
+                or {"title": spec.get("title", task_id)},
+                "starterFiles": material.get("starterFiles") or [],
+                "testFiles": material.get("testFiles") or [],
+                "buildManifest": manifest,
+                "hints": material.get("hints") or [],
+                "status": "tests-passed",
+                "verifications": verification.verifications,
+                "repairs": repairs,
+                "error": None,
+                "generationModel": getattr(provider, "name", ""),
+            }
+            return {
+                "passed": True, "error": None,
+                "artifact": artifact,
+                "cumulative_reference": verification.reference_files,
+                "prior_test_names": [*prior_test_names, *new_tests],
+                "reference_delta": [{"path": f["path"], "content": f["content"]}
+                                    for f in material.get("referenceFiles") or []],
+            }
+
+        # 修复轮：把八步验证的具体问题（含真实诊断）回灌给生成器
+        detail = verification.problems[:4] + [
+            f"[{v.get('kind')}] {d.get('message', '')}"
+            for v in verification.verifications for d in v.get("diagnostics", [])[:3]
+        ][:8]
+        error_summary = "; ".join(verification.problems[:3]) or "验证未通过"
+        if attempt < MAX_REPAIR_PER_TASK:
+            material = lesson_builder.repair_task_lesson(
+                provider, material,
+                [{"kind": "cmake-verification", "message": p} for p in detail],
+                "cpp")
+            repairs.append({"round": attempt + 1, "problem": error_summary,
+                            "changedFiles": [], "outcome": "still-failing"})
+            continue
+        return _cpp_task_failed(task_id, spec, material, repairs,
+                                verification.verifications, error_summary)
+
+    return _cpp_task_failed(task_id, spec, material, repairs, [], "修复轮耗尽")
+
+
+def _cpp_task_failed(task_id: str, spec: dict, material: dict,
+                     repairs: list[dict], verifications: list[dict],
+                     error: str) -> dict:
+    return {
+        "passed": False, "error": error,
+        "artifact": {
+            "taskId": task_id,
+            "milestoneId": spec.get("milestoneId", ""),
+            "language": "cpp",
+            "instructions": material.get("instructions")
+            or {"title": spec.get("title", task_id)},
+            "starterFiles": material.get("starterFiles") or [],
+            "testFiles": material.get("testFiles") or [],
+            "buildManifest": material.get("buildManifest") or {},
+            "hints": material.get("hints") or [],
+            "status": "failed",
+            "verifications": verifications,
+            "repairs": repairs,
+            "error": error,
+            "generationModel": "",
+        },
+        "cumulative_reference": {}, "prior_test_names": [], "reference_delta": [],
+    }
 
 
 def _artifact_public(artifact: LessonArtifact) -> dict:
@@ -339,7 +477,7 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
             return
         blueprint = _normalize_blueprint(release.blueprint_snapshot or {})
         language = release.language
-        if language not in SANDBOX_VERIFIED_LANGUAGES:
+        if language not in ("python", "cpp"):
             # 防御：历史 release 行/竞态兜底（build_lessons 已提前拒绝新请求）
             _update(release_id, status="failed", progress=100,
                     error=unsupported_language_message(language))
@@ -356,6 +494,7 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
     reference_store: dict[str, list[dict]] = {}
     cumulative_reference: dict[str, str] = {}   # 累积参考快照（连续性核心）
     all_test_files: dict[str, str] = {}         # 累积测试（回归用）
+    prior_test_names: list[str] = []            # P8.2：cpp 课程累积 CTest 回归名
     ms_titles = {m["milestoneId"]: m["title"] for m in blueprint.get("milestones") or []}
     passed_count = 0
 
@@ -369,6 +508,30 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
             path = ev.get("path", "")
             if path in snapshot_files:
                 evidence[path] = snapshot_files[path]
+
+        if language == "cpp":
+            # ---- P8.2：C++/CMake 流水线（八步真实验证 + 有限修复轮）----
+            outcome = _process_cpp_task(
+                provider, release_id, task_id, spec, order, total,
+                ms_titles.get(spec.get("milestoneId"), ""),
+                cumulative_reference, prior_test_names, evidence,
+                prior.get(task_id), index == total - 1,
+            )
+            if not outcome["passed"]:
+                artifacts_public.append(outcome["artifact"])
+                _update(release_id, status="failed",
+                        error=f"任务 {task_id} 验证失败：{outcome['error']}",
+                        artifacts=[*artifacts_public], reference_store=reference_store,
+                        progress=100, current_task=task_id,
+                        verification_report={"passed": passed_count, "total": total,
+                                             "failed_task": task_id})
+                return
+            cumulative_reference = outcome["cumulative_reference"]
+            prior_test_names = outcome["prior_test_names"]
+            reference_store[task_id] = outcome["reference_delta"]
+            artifacts_public.append(outcome["artifact"])
+            passed_count += 1
+            continue
 
         material = lesson_builder.build_task_lesson(
             provider, spec, ms_titles.get(spec.get("milestoneId"), ""),
@@ -401,6 +564,7 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
                 material.get("referenceFiles") or [],
                 material.get("testFiles") or [],
                 language,
+                expected_files=(material.get("instructions") or {}).get("expectedFiles"),
             )
             if problems:
                 error_msg = "防伪守卫：" + "; ".join(problems[:3])
@@ -539,7 +703,29 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
                                          "failed_task": task_id})
             return
 
-    # ---- 最终集成：全部任务测试在最终参考快照上一次通过
+    # ---- 最终集成
+    if language == "cpp":
+        # P8.2：cpp 的最终集成（全量 CTest + demo 运行）已在最后一个任务的
+        # 八步验证内完成（verify_cpp_cmake_task is_final）；此处只汇总报告。
+        _update(release_id, status="verifying", progress=92)
+        final_record = next(
+            (v for a in artifacts_public for v in a.get("verifications", [])
+             if v.get("kind") == "final-integration"), {})
+        report = {
+            "passed": passed_count, "total": total,
+            "finalIntegration": final_record or {"status": "unknown"},
+        }
+        if not final_record or final_record.get("status") != "passed":
+            _update(release_id, status="failed",
+                    error="最终集成验证未通过（全部 CTest）",
+                    artifacts=artifacts_public, verification_report=report, progress=100)
+            return
+        _update(release_id, status="ready", progress=100, current_task=None,
+                artifacts=artifacts_public, reference_store=reference_store,
+                verification_report=report, ready_at=utcnow())
+        return
+
+    # python：全部任务测试在最终参考快照上一次通过
     _update(release_id, status="verifying", progress=92)
     final = run_in_sandbox(language, {**cumulative_reference, **all_test_files},
                            "test", None, list(all_test_files.keys()), timeout_s=90.0)

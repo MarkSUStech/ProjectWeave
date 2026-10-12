@@ -34,6 +34,13 @@ export const planTaskSchema = z.object({
   requiredConcepts: z.array(z.string()).default([]),
   deliverable: z.string().default(''),
   testFiles: z.array(z.string()).default([]),
+  // P8.2：CMake 任务验收契约（按构建目标/CTest 名验收；空 = 旧 testFiles 语义）
+  verification: z.object({
+    buildSystem: z.string(),
+    buildTargets: z.array(z.string()).default([]),
+    testNames: z.array(z.string()).default([]),
+    verificationProfile: z.string().default('ctest'),
+  }).nullish(),
   acceptanceCriteria: z.array(z.string()).default([]),
   dependsOn: z.array(z.string()).default([]),
   // P5.1：任务级渐进提示与可视化教学建议

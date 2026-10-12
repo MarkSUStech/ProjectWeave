@@ -45,6 +45,9 @@ class ProjectTask(Base):
     viz_suggestion: Mapped[str] = mapped_column(String(1000), default="")
     # 任务绑定的测试文件路径（任务级验收只看这些文件）
     test_files: Mapped[list] = mapped_column(JSONType, default=list)
+    # P8.2 任务验收契约：cmake 任务按目标/CTest 名验收（{buildSystem,
+    # buildTargets, testNames, verificationProfile}）；空 = 旧 testFiles 语义
+    verification: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     # 任务初始代码 [{path, content}]，项目创建时种子到 project_files
     starter_files: Mapped[list] = mapped_column(JSONType, default=list)
     # 验收条件（人可读描述，展示给学习者）

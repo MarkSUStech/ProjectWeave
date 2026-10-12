@@ -44,16 +44,16 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(cmakeDiscoverInTerminal).mockResolvedValue({
     ok: true, exitCode: 0, executionId: 'e1', targets: TARGETS,
-    discoveredTests: [], cmakeVersion: 'cmake version 3.25.1', generator: 'Ninja',
+    discoveredTests: [], testResults: [], cmakeVersion: 'cmake version 3.25.1', generator: 'Ninja',
   })
   vi.mocked(cmakeBuildInTerminal).mockResolvedValue({
-    ok: true, exitCode: 0, executionId: 'e2', targets: [], discoveredTests: [], cmakeVersion: null, generator: null,
+    ok: true, exitCode: 0, executionId: 'e2', targets: [], discoveredTests: [], testResults: [], cmakeVersion: null, generator: null,
   })
   vi.mocked(cmakeRunInTerminal).mockResolvedValue({
-    ok: true, exitCode: 0, executionId: 'e3', targets: [], discoveredTests: [], cmakeVersion: null, generator: null,
+    ok: true, exitCode: 0, executionId: 'e3', targets: [], discoveredTests: [], testResults: [], cmakeVersion: null, generator: null,
   })
   vi.mocked(cmakeTestInTerminal).mockResolvedValue({
-    ok: false, exitCode: 1, executionId: 'e4', targets: [], discoveredTests: ['test_world'], cmakeVersion: null, generator: null,
+    ok: false, exitCode: 1, executionId: 'e4', targets: [], discoveredTests: ['test_world'], testResults: [], cmakeVersion: null, generator: null,
   })
 })
 

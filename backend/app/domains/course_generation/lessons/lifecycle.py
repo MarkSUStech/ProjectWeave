@@ -333,3 +333,82 @@ def final_verification_report(db: Session, project_id) -> dict:
         "completedAt": utcnow().isoformat(),
         "note": "报告基于课程验证与学生学习记录；AI 参考实现的验证不视为学生独立完成的证据。",
     }
+
+
+# ---------------------------------------------------------------- P8.2 CMake 任务验收
+
+
+def evaluate_task_cmake(db: Session, project_id, task_id: str):
+    """CMake/CTest 任务的服务端可信验收（D45）。
+
+    不采信客户端自报结果：直接读取学生工程文件，在真实受限沙箱运行
+    本任务要求的 CTest 测试（+ 已完成任务的回归），以真实执行判定。
+    返回 (任务, 是否通过, 依赖缺失, 告警) —— 与 curriculum.evaluate_task 同形。
+    """
+    from app.domains.course_generation.verification.course_verifier import (
+        run_cmake_operation,
+    )
+    from app.domains.executions.sandbox.base import SandboxUnavailableError
+
+    project = get_project(db, str(project_id))
+    release = _release_for_project(db, project)
+    if release is None:
+        raise ReleaseError("项目不是课程项目，无法用 CMake 验收", 422)
+
+    tasks = list(db.scalars(
+        select(ProjectTask).where(ProjectTask.project_id == project.id)
+    ))
+    task = next((t for t in tasks if t.task_id == task_id), None)
+    if task is None:
+        raise ReleaseError("任务不存在", 404)
+
+    verification = task.verification or {}
+    test_names = list(verification.get("testNames") or [])
+    if verification.get("buildSystem") != "cmake" or not test_names:
+        raise ReleaseError("任务缺少 CMake 验收契约（testNames 为空）", 422)
+
+    # 依赖闸门（与 curriculum.evaluate_task 同规则）
+    by_id = {t.task_id: t for t in tasks}
+    blocked = [d for d in (task.depends_on or [])
+               if by_id.get(d) is None or by_id[d].status != "done"]
+    if blocked:
+        raise ReleaseError(f"前置任务尚未完成：{', '.join(sorted(blocked))}", 422)
+
+    # 回归集：此前已完成任务要求的 CTest（学生不得破坏前序阶段）
+    artifacts = {a.get("taskId") or a.get("task_id"): a for a in (release.artifacts or [])}
+    regression: list[str] = []
+    for other in tasks:
+        if other.task_id != task.task_id and other.status == "done":
+            manifest = (artifacts.get(other.task_id) or {}).get("buildManifest") \
+                or (artifacts.get(other.task_id) or {}).get("build_manifest") or {}
+            regression.extend(manifest.get("testNames") or [])
+    required = sorted(set(test_names) | set(regression))
+
+    student_files = {
+        f.path: f.content for f in db.scalars(
+            select(ProjectFile).where(ProjectFile.project_id == project.id)
+        )
+    }
+    warnings: list[str] = []
+    try:
+        outcome = run_cmake_operation(
+            student_files, mode="test", selected_tests=required, timeout_s=180.0)
+    except SandboxUnavailableError as exc:
+        raise ReleaseError(f"沙箱不可用，无法可信验收：{exc.reason}", 503) from exc
+
+    if not outcome.ok and any(
+            p.get("name") == "configure" and p.get("status") == "failed"
+            for p in outcome.phases or []):
+        warnings.append("学生工程 CMake Configure 失败")
+    failed_names = [t.get("path") for t in (outcome.test_results or [])
+                    if t.get("path") in set(test_names) and t.get("status") != "passed"]
+    regression_failed = [t.get("path") for t in (outcome.test_results or [])
+                         if t.get("path") in set(regression) and t.get("status") != "passed"]
+    if regression_failed:
+        warnings.append(f"前序回归测试失败：{', '.join(regression_failed)}")
+
+    passed = outcome.ok and not failed_names and not regression_failed
+    task.status = "done" if passed else "needs-fix"
+    db.commit()
+    db.refresh(task)
+    return task, passed, blocked, warnings

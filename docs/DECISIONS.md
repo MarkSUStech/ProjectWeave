@@ -634,3 +634,21 @@
 - **契约**：`ExecutionCreate` 增 `buildSystem/cmakeAction/targetName/selectedTests`（全部可选，默认 direct 旧行为）；`ExecutionRead` 增 `cmake`（targets/discoveredTests/artifact/generator/cmakeVersion）；`DiagnosticRead` 增 `stage`（configure/compile/link/run/test）。`skipped` 进入测试状态契约（未执行不得伪装成 failed/passed）。
 
 **后果**：一次性容器意味着每次操作全量 Configure+Build（无增量缓存）——接口已按操作拆分，为 P8.2+ 的安全增量构建预留。CMake 目标的 LLDB 调试衔接留待后续（现有 direct 调试不回归，前端如实显示限制）。
+
+## D45 · P8.2 C++ AI Course Builder：CMake 课程生成 + 八步真实验证 + 服务端可信验收
+
+**日期**：2026-10-12。
+
+**背景**：P8.1 有了可靠 CMake Runtime，但课程系统仍 Python-only（C++ 课程被如实拒绝）；防伪守卫与泄露判定按 Python 语义设计，不适应 C++ 头/实现分离与"工程骨架"类任务。
+
+**决策**：
+
+- **执行档案确定性派生**（`execution_profile.py`）：主语言按技术栈+文件证据**评分**（混合仓库不再 Python 先验优先）；cpp 课程 = CMake profile；`VERIFIED_PROFILES` 声明沙箱已验证组合，未验证组合（如 typescript）在生成前 422 拒绝。外部依赖痕迹（find_package/FetchContent/vcpkg/SDL/Qt…）可检测，进入 nonGoals 或 unsupported，不放宽沙箱。
+- **LessonBuilder 按语言分离**：`build_task_lesson`（Python/pytest）与 `build_cpp_cmake_task_lesson`（C++20/CMake/CTest：同一演化工程、engine 库+app+tests 子目录、头/实现分离、add_test 注册、buildManifest 真实声明）。共享 LessonArtifact 结构与修复流程。
+- **buildManifest 契约**：`{buildTargets, runTargets, testNames, expectedFailurePhase?}`——验证与验收的权威；目标/测试名必须被 File API/CTest 真实发现证实，编造即失败。
+- **CppCMakeCourseVerifier 八步**：守卫 → Configure → File API 目标校验 → 构建+参考测试（required∪回归一次跑）→ starter 预期失败（可构建 + 要求测试失败；坏工程≠合格 starter）→（final）全量 CTest + demo 运行。全部经 `run_cmake_operation` 复用 P8.1 CppRunner+DockerSandboxManager——无第二套构建系统。
+- **泄露判定精确化**：仅当文件∈任务 expectedFiles **且为实现源码**（.cpp/.py）且 starter==reference 才判泄露；头文件/构建脚本一致属正常教学（接口/配置给定）。tests/CMakeLists.txt 认可为测试注册。
+- **任务验收契约**：ProjectTask.verification 列（`{buildSystem, buildTargets, testNames}`）；CMake 任务 evaluate 走 `evaluate_task_cmake`——**服务端读学生工程文件直接跑 CTest 判定，不采信客户端自报**；回归集 = 已完成任务 testNames 并集。旧课程 testFiles 语义不变。
+- **验收协议**：cmake 任务的验收单位是 CTest 名与目标名，绝不把测试名冒充 .cpp 路径；前端 TaskPanel 按 verification 路由到 cmakeTestInTerminal。
+
+**E2E**：`test_cpp_course_generation_e2e.py`——Mock LLM 世界模拟引擎三任务演化工程全链（真 Docker）：生成→八步验证→ready→实例化→逐任务激活/解题/服务端验收（starter 态必失败、实现后通过、回归保持）→最终报告；参考实现与 H4 全程隔离。真实 DeepSeek 版门控（PW_COURSE_E2E）。

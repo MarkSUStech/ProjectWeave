@@ -78,6 +78,9 @@ class CmakeInfoRead(APIModel):
     operation: str  # discover | build | run | test
     targets: list[CmakeTargetRead] | None = None  # discover 返回
     discovered_tests: list[str] = Field(default_factory=list)  # test 返回
+    # P8.1.1：要求执行但未运行的测试（判定失败的依据，透明展示）
+    required_missing: list[str] = Field(default_factory=list)
+    not_selected: list[str] = Field(default_factory=list)  # 未在本次选择范围
     target: str | None = None
     artifact: str | None = None
     generator: str | None = None

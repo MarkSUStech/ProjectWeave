@@ -440,14 +440,18 @@ class CppRunner(LanguageRunner):
             tests = payload.get("tests") or []
             ctest_exit = payload.get("ctestExit")
             junit_error = payload.get("junitError")
+            required_missing = payload.get("requiredMissing") or []
+            not_selected = set(payload.get("notSelected") or [])
             outcome = ParsedOutcome(exit_code=ctest_exit, timed_out=timed_out)
             outcome.cmake = {
                 "operation": "test",
                 "discovered_tests": payload.get("discovered", []),
+                "required_missing": required_missing,
+                "not_selected": sorted(not_selected),
                 "generator": payload.get("generator"),
                 "cmakeVersion": payload.get("cmakeVersion"),
             }
-            # ctest 测试 → 协议 TestFileOutcome（每测试一组）
+            # ctest 测试 → 协议 TestFileOutcome（每测试一组；未选择项透传 skipped）
             outcome.test_results = [{
                 "path": t.get("name", ""),
                 "status": t.get("status", "error"),
@@ -460,10 +464,14 @@ class CppRunner(LanguageRunner):
                 }],
                 "error": t.get("error"),
             } for t in tests]
-            executed = [t for t in tests if t.get("status") != "skipped"]
-            # 未执行任何测试 / JUnit 无效 → 永不判通过（防伪装）
+            # 通过判定只看本次要求执行的测试（选择模式=选中项；全量=全部）：
+            # 未选择的 skipped 不影响；要求执行的 skipped（Not Run/DISABLED）不得通过。
+            executed = [t for t in tests
+                        if t.get("status") != "skipped" or t.get("name") in required_missing]
             outcome.ok = bool(executed) and ctest_exit == 0 and not timed_out \
-                and not junit_error and all(t.get("status") == "passed" for t in tests)
+                and not junit_error and not required_missing \
+                and all(t.get("status") == "passed" for t in tests
+                        if t.get("name") not in not_selected)
             diagnostics: list[dict] = []
             if junit_error:
                 diagnostics.append({"severity": "error", "message": junit_error,
@@ -472,10 +480,12 @@ class CppRunner(LanguageRunner):
                 diagnostics.append({"severity": "error", "message": "CTest 执行超时",
                                     "source": "test", "stage": "test"})
             for t in tests:
-                if t.get("status") in ("failed", "error"):
+                if t.get("name") in not_selected:
+                    continue
+                if t.get("status") in ("failed", "error", "skipped"):
                     diagnostics.append({
                         "severity": "error",
-                        "message": f"{t.get('name')}：{t.get('error') or '测试失败'}",
+                        "message": f"{t.get('name')}：{t.get('error') or '测试未通过'}",
                         "source": "test", "stage": "test",
                     })
             outcome.diagnostics = diagnostics

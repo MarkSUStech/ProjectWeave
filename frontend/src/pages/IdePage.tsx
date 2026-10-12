@@ -22,6 +22,7 @@ import { useFileHistory } from '../hooks/useFileHistory'
 import { runFileInTerminal } from '../lib/runner/runToTerminal'
 import { runTestSuite } from '../lib/runner/runTestSuite'
 import { runRemoteInTerminal, runRemoteTestsInTerminal, canRunPath, isAnyTestPath, isRemoteExecutable } from '../lib/runner/runRemote'
+import { cmakeTestInTerminal } from '../lib/runner/runCmake'
 import { detectLanguage } from '../lib/execution/LanguageProfile'
 import { trackClientEvent } from '../lib/eventTracker'
 import { fetchSuggestion } from '../api/tutor'
@@ -147,9 +148,26 @@ function IdeWorkspace({ project }: { project: Project }) {
   }, [project.id, openPath, draftContent, files])
 
   const runTaskTests = useCallback(
-    async (testPaths: string[]): Promise<TestFileResult[]> => {
+    async (
+      testPaths: string[],
+      verification?: PlanTask['verification'],
+    ): Promise<TestFileResult[]> => {
       const vfs = await buildProjectVfs()
       if (!vfs) return []
+
+      // P8.2：CMake 课程任务按 CTest 名运行（服务端 evaluate 会再独立复核）
+      if (verification?.buildSystem === 'cmake' && verification.testNames.length > 0) {
+        layout?.reveal('terminal')
+        const outcome = await cmakeTestInTerminal(vfs, project.id, verification.testNames)
+        return outcome.testResults.map((file) => ({
+          path: file.path,
+          status: file.status,
+          error: file.error,
+          cases: file.cases.map((c) => ({
+            name: c.name, status: c.status, error: c.error, durationMs: c.durationMs,
+          })),
+        }))
+      }
 
       const { execute, UnsupportedExecutionError, detectLanguage } = await import('../lib/execution')
       const languageId = detectLanguage(testPaths[0] ?? '') ?? 'typescript'

@@ -79,6 +79,12 @@
     - CTest：`--show-only=json-v1` 发现 + `--output-junit` 执行（JUnit 解析有界；**0 执行/JUnit 缺失/Not Run 不判通过**；选择执行 `-R` 逐名转义）；
     - 独立资源 profile `PW_EXECUTION_CMAKE_*`（180s/1GB/2CPU/256pids/512MB tmpfs，服务端限定）；诊断带 `stage`（configure/build/run/test），CMake Configure 错误定位 CMakeLists 行号；
     - 验收工程 `tests/fixtures/sample-cmake-project`（多子目录 + 静态库 + 双可执行 + 2 CTest）。
+- **领域模块** `app/domains/course_generation/` P8.2 扩展（D45）：
+  - `execution_profile.py`：蓝图→执行档案确定性派生（评分式主语言、CMake 判定、VERIFIED_PROFILES 门控、外部依赖检测）；
+  - `lessons/lesson_builder.py` 分语言：`build_task_lesson`（Python/pytest）+ `build_cpp_cmake_task_lesson`（C++20/CMake/CTest 演化工程 + buildManifest）；
+  - `verification/course_verifier.py`：`verify_cpp_cmake_task` 八步验证（守卫/Configure/File API 目标/参考测试∪回归/starter 预期失败/final 全量+demo），经 `run_cmake_operation` 复用执行层 CppRunner+DockerSandboxManager；
+  - `lessons/lifecycle.py`：`evaluate_task_cmake` 服务端可信验收（读学生工程跑 CTest，不采信客户端；回归=已完成任务 testNames）；ProjectTask.verification 验收契约列；
+  - 防伪守卫精确化：泄露仅判 expectedFiles∩实现源码；tests/CMakeLists.txt=测试注册。
   - `service.py`：会话编排（通用路径校验拒绝绝对/`..`/反斜杠/盘符/保留名/`__pw`、文件数/总字节/stdin/超时/输出上限）、线程池执行（并发上限）、300ms 节流流式落库、终态写入 + `execution-finished` 服务端事件（幂等）；**信任级固定 practice**（服务端执行 ≠ 正式认证）；沙箱不可用 503。
   - `router.py`：`POST /executions`（202）、`GET /executions/{id}?afterSeq=`（增量事件，SSE 预留）、`POST /executions/{id}/cancel`（幂等）。
   - 镜像：`backend/sandbox/python/Dockerfile` 与 `backend/sandbox/cpp/Dockerfile`（构建命令与隔离参数表见 `backend/sandbox/README.md`）。

@@ -33,7 +33,10 @@ export interface TaskPanelProps {
   currentTaskId: string | null
   onSelectTask: (taskId: string) => void
   /** 运行任务绑定的测试（浏览器 Worker，返回逐文件结果） */
-  onRunTaskTests: (testPaths: string[]) => Promise<TestFileResult[]>
+  onRunTaskTests: (
+    testPaths: string[],
+    verification?: import('../../types/plan').PlanTask['verification'],
+  ) => Promise<TestFileResult[]>
   /** 课程生命周期进度（P7.3；非课程项目为 null） */
   courseProgress?: import('../../api/courseGeneration').CourseProgress | null
   /** 激活任务（P7.3：安全合并文件） */
@@ -63,7 +66,7 @@ export function TaskPanel({
     setError(null)
     setEvaluation(null)
     try {
-      const results = await onRunTaskTests(currentTask.testFiles)
+      const results = await onRunTaskTests(currentTask.testFiles, currentTask.verification)
       setTestResults(results)
       const trace = useRunStore.getState().trace
       const files: EvaluationFileResult[] = results.map((r) => ({

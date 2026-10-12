@@ -213,6 +213,38 @@ def test_parse_ctest_results_and_zero_executed_never_passes():
     assert any(d["message"].startswith("CTest 结果报告") for d in outcome.diagnostics)
 
 
+def test_parse_ctest_selection_mode_unselected_do_not_fail():
+    """P8.1.1：选择模式下未选择的 skipped 不影响通过。"""
+    outcome = runner.parse_result(_sandbox_with_marker({
+        "kind": "cpp", "phase": "cmake-tested", "ctestExit": 0,
+        "tests": [
+            {"name": "test_world", "status": "passed", "durationMs": 5, "error": None},
+            {"name": "test_terrain", "status": "skipped", "durationMs": 0,
+             "error": "未在本次选择范围（-R 过滤）"},
+        ],
+        "discovered": ["test_world", "test_terrain"],
+        "requiredMissing": [], "notSelected": ["test_terrain"],
+    }), cmake_spec(mode="test"))
+    assert outcome.ok  # 只有 test_world 被要求执行且通过
+    assert not any(d for d in outcome.diagnostics if "test_terrain" in d["message"])
+
+
+def test_parse_ctest_required_missing_fails_even_if_others_pass():
+    """要求执行的测试未运行（Not Run/DISABLED）→ 不得判通过。"""
+    outcome = runner.parse_result(_sandbox_with_marker({
+        "kind": "cpp", "phase": "cmake-tested", "ctestExit": 0,
+        "tests": [
+            {"name": "test_world", "status": "passed", "durationMs": 5, "error": None},
+            {"name": "test_terrain", "status": "skipped", "durationMs": 0,
+             "error": "要求执行但未运行（Not Run：可能被禁用或被过滤）"},
+        ],
+        "discovered": ["test_world", "test_terrain"],
+        "requiredMissing": ["test_terrain"], "notSelected": [],
+    }), cmake_spec(mode="test"))
+    assert not outcome.ok
+    assert any("test_terrain" in d["message"] for d in outcome.diagnostics)
+
+
 def test_parse_ctest_not_run_marked_skipped():
     outcome = runner.parse_result(_sandbox_with_marker({
         "kind": "cpp", "phase": "cmake-tested", "ctestExit": 0,

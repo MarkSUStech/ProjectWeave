@@ -585,7 +585,8 @@ def _parse_junit(path: str) -> list[dict] | None:
 def cmake_test_mode(manifest: dict) -> None:
     """CTest 流程：Configure → 全量构建 → 发现 → 执行（JUnit）→ 结构化结果。"""
     timeout = float(manifest.get("timeoutSec", 120))
-    selected = [t for t in manifest.get("selectedTests") or [] if TARGET_NAME_RE.match(t)]
+    # 不在驱动侧过滤名字：未知/非法名一律经“选择的测试不存在”显式报错
+    selected = [t for t in manifest.get("selectedTests") or [] if isinstance(t, str) and t]
     work = os.getcwd()
     build_dir = os.path.join(work, "build")
 
@@ -620,14 +621,24 @@ def cmake_test_mode(manifest: dict) -> None:
         sys.exit(1)
     discovered_names = [t.get("name", "") for t in discovered]
 
+    # 显式选择的测试必须存在于真实发现列表（严格校验，不静默忽略）
+    unknown = [name for name in selected if name not in discovered_names]
+    if unknown:
+        _emit({"kind": "cpp", "phase": "cmake-failed", "stage": "ctest-selection",
+               "exitCode": 2,
+               "rawStderr": f"选择的测试不存在：{', '.join(unknown)}"
+                            f"（实际发现：{', '.join(discovered_names) or '（无）'}）",
+               "timedOut": False})
+        sys.exit(2)
+
     junit_path = os.path.join(build_dir, "__pw_junit.xml")
     cmd = ["ctest", "--test-dir", build_dir, "--output-on-failure",
            "--output-junit", junit_path]
     if selected:
-        # 选择执行：逐名转义后以 -R 正则传入（ctest 无逐名参数）
+        # POSIX ERE 全锚点 ^(a|b)$（ctest 不支持 (?:...)；无锚点会误匹配前缀名）
         import re as _re
 
-        pattern = "|".join(_re.escape(name) for name in selected)
+        pattern = "^(" + "|".join(_re.escape(name) for name in selected) + ")$"
         cmd += ["-R", pattern]
     ctest_start = time.monotonic()
     code, out, err, timed_out = _run(cmd, cwd=work, timeout=min(timeout, CTEST_TIMEOUT_S))
@@ -641,24 +652,45 @@ def cmake_test_mode(manifest: dict) -> None:
         # JUnit 缺失/非法：不得把结果伪装成通过——如实报告 ctest 原始输出
         _emit({"kind": "cpp", "phase": "cmake-tested", "ctestExit": code,
                "tests": [], "discovered": discovered_names,
+               "requiredMissing": list(discovered_names),
                "junitError": "CTest 结果报告缺失或无效（未判定为通过）",
                "stdoutTail": _truncate(out), "timedOut": timed_out})
         sys.exit(1)
+    if not executed and discovered_names:
+        # 发现了测试但一个都没执行（如 -R 过滤为空/正则无效）→ 明确报错
+        _emit({"kind": "cpp", "phase": "cmake-tested", "ctestExit": code,
+               "tests": [], "discovered": discovered_names,
+               "requiredMissing": list(discovered_names),
+               "junitError": "未执行任何已发现的测试（-R 选择为空或 CTest 报告无效）",
+               "stdoutTail": _truncate(out), "timedOut": timed_out})
+        sys.exit(1)
 
-    # ctest 退出码非 0 且无任何失败记录 → 结果不完整（如选择的名字不存在）
-    by_name = {r["name"]: r for r in executed}
-    not_run = [
+    # 通过条件只覆盖本次要求执行的测试：选择模式 = 选中项；全量 = 全部发现项
+    executed_names = {r["name"] for r in executed}
+    required = set(selected) if selected else set(discovered_names)
+    required_missing = [
         {"name": n, "status": "skipped", "durationMs": 0,
-         "error": "未执行（Not Run：可能被过滤或禁用）"}
-        for n in discovered_names if n not in by_name
+         "error": "要求执行但未运行（Not Run：可能被禁用或被过滤）"}
+        for n in discovered_names if n in required and n not in executed_names
+    ]
+    # 未选择的测试：保留 skipped 事实（透明展示），不参与本次通过判定
+    not_selected = [
+        {"name": n, "status": "skipped", "durationMs": 0,
+         "error": "未在本次选择范围（-R 过滤）"}
+        for n in discovered_names if n not in required
     ]
     _emit({"kind": "cpp", "phase": "cmake-tested", "ctestExit": code,
-           "tests": [*executed, *not_run], "discovered": discovered_names,
+           "tests": [*executed, *required_missing, *not_selected],
+           "discovered": discovered_names,
+           "requiredMissing": [t["name"] for t in required_missing],
+           "notSelected": [t["name"] for t in not_selected],
            "ctestMs": ctest_ms, "buildMs": build_ms, "timedOut": timed_out,
            "cmakeVersion": _cmake_version(), "generator": "Ninja"})
-    all_ok = (code == 0 and executed
+    # 要求执行的测试必须真实通过；JUnit skipped（DISABLED/跳过）不算通过
+    all_ok = (code == 0 and not timed_out
+              and executed
               and all(r["status"] == "passed" for r in executed)
-              and not any(t.get("status") != "passed" for t in not_run))
+              and not required_missing)
     sys.exit(0 if all_ok else 1)
 
 

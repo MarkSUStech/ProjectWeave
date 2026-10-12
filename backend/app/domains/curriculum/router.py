@@ -84,12 +84,22 @@ def evaluate_task(
     try:
         pid = parse_project_id(project_id)
         get_project(db, project_id)  # 项目存在性校验（404）
-        task, passed, _blocked, warnings = service.evaluate_task(
-            db,
-            pid,
-            task_id,
-            payload.model_dump(by_alias=True),
-        )
+        # P8.2：CMake/CTest 课程任务走服务端可信验收（真实沙箱跑学生工程，
+        # 不采信客户端自报套件）；旧课程保持 testFiles 语义不变。
+        existing = service.get_task(db, pid, task_id)
+        if (existing.verification or {}).get("buildSystem") == "cmake":
+            from app.domains.course_generation.lessons.lifecycle import (
+                evaluate_task_cmake,
+            )
+
+            task, passed, _blocked, warnings = evaluate_task_cmake(db, pid, task_id)
+        else:
+            task, passed, _blocked, warnings = service.evaluate_task(
+                db,
+                pid,
+                task_id,
+                payload.model_dump(by_alias=True),
+            )
     except (PlanError, ProjectNotFoundError) as exc:
         raise HTTPException(status_code=getattr(exc, "status", 404), detail=str(exc)) from exc
 

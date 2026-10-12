@@ -57,7 +57,7 @@ export interface ConsoleOutput {
 
 export interface TestCaseOutcome {
   name: string
-  status: 'passed' | 'failed' | 'skipped'
+  status: 'passed' | 'failed' | 'skipped' | 'error'
   error?: string
   durationMs: number
 }

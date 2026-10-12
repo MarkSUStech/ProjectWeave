@@ -1,6 +1,6 @@
 /** 课程规划契约与 API 客户端测试（不 mock plans 模块）。 */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { planDetailSchema, planReadSchema } from '../types/plan'
+import { planDetailSchema, planReadSchema, planTaskSchema } from '../types/plan'
 import { getPlan, replan } from '../api/plans'
 
 const plan = {
@@ -78,5 +78,31 @@ describe('plan API 客户端', () => {
     const [secondUrl, secondInit] = fetchMock.mock.calls[1] as [string, RequestInit]
     expect(secondUrl).toBe('/api/v1/plans/p1/replan')
     expect(secondInit.method).toBe('POST')
+  })
+})
+
+
+// ---------------------------------------------------------------- P8.2 CMake 任务验收契约
+
+describe('planTaskSchema verification（P8.2）', () => {
+  it('cmake 验收契约解析：构建目标与 CTest 名', () => {
+    const task = planTaskSchema.parse({
+      taskId: 't1', milestone: 1, title: '骨架', status: 'pending',
+      testFiles: ['tests/test_world.cpp'],
+      verification: {
+        buildSystem: 'cmake', buildTargets: ['engine'],
+        testNames: ['world_update'], verificationProfile: 'ctest',
+      },
+    })
+    expect(task.verification?.testNames).toEqual(['world_update'])
+    expect(task.verification?.buildTargets).toEqual(['engine'])
+  })
+
+  it('旧课程无 verification 字段：nullish 兼容不破坏', () => {
+    const task = planTaskSchema.parse({
+      taskId: 't1', milestone: 1, title: 'x', status: 'pending',
+      testFiles: ['tests/test_x.py'],
+    })
+    expect(task.verification ?? null).toBeNull()
   })
 })

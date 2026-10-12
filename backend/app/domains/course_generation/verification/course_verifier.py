@@ -171,6 +171,27 @@ CPP_SCRIPT_NAMES = ("cmakelists.txt",)
 SANDBOX_VERIFIED_LANGUAGES = ("python",)
 
 
+# 泄露判定认定的"实现载体"扩展名：C++ 只有翻译单元（头文件=接口给定），
+# Python 为 .py。测试文件是验收工具（本就给定），永远不算泄露。
+LEAK_SOURCE_EXTS = {"python": {".py"}, "cpp": {".cpp", ".cc", ".cxx"},
+                    "typescript": {".ts", ".tsx"}}
+
+
+def _is_test_like(path: str) -> bool:
+    lower = path.lower()
+    base = lower.rsplit("/", 1)[-1]
+    return (lower.startswith("tests/") or lower.startswith("test/")
+            or base.startswith("test_") or base.endswith("_test")
+            or base.endswith("_test.cpp") or base.endswith("_test.py"))
+
+
+def _is_impl_source(path: str, language: str) -> bool:
+    """答案泄露判定用：真实实现载体（翻译单元/.py；不含头文件与 CMake 脚本）。"""
+    if _is_test_like(path):
+        return False
+    return path.lower().endswith(tuple(LEAK_SOURCE_EXTS.get(language, {".py"})))
+
+
 def _is_source(path: str, language: str) -> bool:
     lower = path.lower()
     if language == "cpp" and (lower.endswith(CPP_SCRIPT_SUFFIXES)
@@ -278,14 +299,22 @@ def _python_test_problems(test_files: list[dict]) -> list[str]:
 
 
 def _cpp_test_problems(test_files: list[dict]) -> list[str]:
-    """C++ 约定（ENV profile）：测试为独立可执行程序，断言 + main + 返回码判定。"""
+    """C++ 约定（ENV profile）：测试为独立可执行程序，断言 + main + 返回码判定。
+
+    CMakeLists.txt/.cmake 是测试注册（add_test），不是测试本体——跳过本体
+    规则，但要求至少存在一个 .cpp/.cc/.cxx 测试源文件。
+    """
     problems: list[str] = []
     mains = 0
+    cpp_test_sources = 0
     for f in test_files:
         path, code = f.get("path", ""), f.get("content", "") or ""
         if not path.lower().endswith((".cpp", ".cc", ".cxx")):
-            problems.append(f"{path}: C++ 测试须为 .cpp/.cc 源文件（独立可执行程序）")
+            if path.lower().endswith((".txt", ".cmake")) and "cmakelists" in path.lower():
+                continue  # 测试注册脚本（add_test），合法
+            problems.append(f"{path}: C++ 测试须为 .cpp/.cc 源文件或 CMakeLists 注册")
             continue
+        cpp_test_sources += 1
         if re.search(r"\bint\s+main\s*\(", code):
             mains += 1
         else:
@@ -294,8 +323,8 @@ def _cpp_test_problems(test_files: list[dict]) -> list[str]:
             problems.append(f"{path}: 没有任何断言（assert/EXPECT_*/ASSERT_*）——测试空转")
         if re.search(r"\bassert\s*\(\s*true\s*\)", code, re.IGNORECASE):
             problems.append(f"{path}: assert(true) 恒真断言")
-    if test_files and mains == 0:
-        problems.append("没有任何含 main 的可执行测试程序")
+    if test_files and (mains == 0 or cpp_test_sources == 0):
+        problems.append("没有任何含 main 的可执行测试程序（需要 .cpp 测试源文件）")
     return problems
 
 
@@ -323,10 +352,14 @@ TEST_GUARDS = {
 
 
 def guard_starter(starter_files: list[dict], reference_files: list[dict],
-                  test_files: list[dict], language: str = "python") -> list[str]:
+                  test_files: list[dict], language: str = "python",
+                  expected_files: list[str] | None = None) -> list[str]:
     """starter 防伪守卫（按语言）：结构/有效 TODO/答案泄露/测试空转。返回问题列表。
 
-    每条问题带文件路径，直接进入修复模型反馈与前端展示。
+    expected_files = 本任务要求学生实现的文件（instructions.expectedFiles）。
+    答案泄露判定：expected_files 提供时，只在这些文件上判 starter==reference
+    （头文件/前序已完成文件在 starter 与 reference 一致是正常工程演化，
+    不是泄露）；缺省回退到源码文件等同性启发。
     """
     problems: list[str] = []
     if not starter_files:
@@ -359,15 +392,27 @@ def guard_starter(starter_files: list[dict], reference_files: list[dict],
                 "TODO 必须带描述文字，或保留空函数体（pass/.../raise NotImplementedError）")
 
     # -- 答案泄露：starter 不得与 reference 的核心实现完全一致
+    # （仅真实源码文件；CMakeLists 等构建配置在结构完整的 CMake 课程中
+    # starter=reference 属正常——挖空在实现文件，不在构建脚本）
     starter_paths = {f["path"] for f in starter_files}
+    expected_set = set(expected_files or [])
     for ref in reference_files:
         path = ref["path"]
-        if path not in starter_paths or not _is_source(path, language):
+        if path not in starter_paths:
+            continue
+        if expected_set:
+            # 精确判定：本任务要求实现**且是真实实现源码**的文件才算答案载体。
+            # 工程骨架类任务 expectedFiles 常含 CMakeLists/头文件——构建配置与
+            # 接口在 starter 中给定属正常教学（D45：不能因 starter 缺 CMake
+            # 指令判坏工程，同理不因构建文件一致判泄露）。
+            if path not in expected_set or not _is_impl_source(path, language):
+                continue
+        elif not _is_impl_source(path, language):
             continue
         starter = next(f["content"] for f in starter_files if f["path"] == path)
         if starter.strip() == (ref.get("content", "") or "").strip():
             body = _code_body(ref.get("content", ""))
-            if len(body) > 200:  # 只有内容实质时才算泄露
+            if len(body) > 60:  # 只有内容实质时才算泄露
                 problems.append(f"starter 与 reference 完全一致（答案泄露）：{path}")
 
     # -- 测试空转守卫（按语言的测试约定）
@@ -394,3 +439,204 @@ def merge_files(base: dict[str, str], changes: dict[str, str]) -> dict[str, str]
     merged = dict(base)
     merged.update(changes)
     return merged
+
+
+# ---------------------------------------------------------------- C++ / CMake 课程验证（P8.2，D45）
+# 复用 P8.1 执行系统（同一 CppRunner + DockerSandboxManager + marker 协议），
+# 不存在第二套 C++ 构建系统。
+
+from app.domains.executions.languages.base import ExecutionSpecInput, ParsedOutcome  # noqa: E402
+from app.domains.executions.languages.cpp_runner import CppRunner  # noqa: E402
+
+_cpp_runner = CppRunner()
+
+
+def run_cmake_operation(
+    files: dict[str, str],
+    mode: str = "test",
+    cmake_action: str | None = None,
+    target_name: str | None = None,
+    selected_tests: list[str] | None = None,
+    timeout_s: float = 180.0,
+) -> ParsedOutcome:
+    """在真实受限沙箱执行一个 CMake 操作（discover/build/run/test 全链复用 P8.1）。"""
+    import threading
+
+    spec = ExecutionSpecInput(
+        exec_id=str(uuid.uuid4()), mode=mode, entry_point=None, test_paths=[],
+        files=dict(files), stdin="", timeout_s=timeout_s,
+        build_system="cmake", cmake_action=cmake_action,
+        target_name=target_name, selected_tests=list(selected_tests or []),
+    )
+    sandbox_spec = _cpp_runner.build_spec(spec, timeout_s)
+    result = get_sandbox().run(sandbox_spec, threading.Event())
+    return _cpp_runner.parse_result(result, spec)
+
+
+@dataclass
+class CppTaskVerification:
+    """一个 C++/CMake 任务的八步验证结果。"""
+
+    passed: bool = False
+    problems: list[str] = field(default_factory=list)
+    verifications: list[dict] = field(default_factory=list)
+    reference_files: dict[str, str] = field(default_factory=dict)  # 累积参考快照
+    test_names: list[str] = field(default_factory=list)
+
+
+def _record(kind: str, outcome: ParsedOutcome, note: str = "") -> dict:
+    """ParsedOutcome → SandboxVerification 形状记录。"""
+    tests = outcome.test_results or []
+    return {
+        "kind": kind,
+        "status": "passed" if outcome.ok else "failed",
+        "exit_code": outcome.exit_code,
+        "total_tests": len(tests),
+        "passed_tests": sum(1 for t in tests if t.get("status") == "passed"),
+        "failed_tests": sum(1 for t in tests if t.get("status") != "passed"),
+        "diagnostics": (outcome.diagnostics or [])[:20],
+        "stderr_tail": "\n".join(d.get("message", "") for d in (outcome.diagnostics or [])[:5])[:800],
+        "duration_ms": 0,
+        **({"note": note} if note else {}),
+    }
+
+
+def verify_cpp_cmake_task(
+    material: dict,
+    cumulative_reference: dict[str, str],  # 前序任务累积参考工程
+    prior_test_names: list[str],           # 此前阶段要求保留的 CTest 名
+    is_final: bool = False,
+) -> CppTaskVerification:
+    """八步验证：源校验 → Configure → 目标发现 → 构建 → 参考测试（含回归）→
+    starter 预期失败 →（最终）全量集成 + demo 运行。真实沙箱，绝不伪装。"""
+    result = CppTaskVerification()
+
+    # ---- Step 1：源校验（语言化守卫：TODO/泄露/测试空转 + 工程结构）
+    problems = guard_starter(
+        material.get("starterFiles") or [],
+        material.get("referenceFiles") or [],
+        material.get("testFiles") or [],
+        "cpp",
+        expected_files=(material.get("instructions") or {}).get("expectedFiles"),
+    )
+    manifest = material.get("buildManifest") or {}
+    build_targets = list(manifest.get("buildTargets") or [])
+    test_names = list(manifest.get("testNames") or [])
+    run_targets = list(manifest.get("runTargets") or [])
+    expected_failure_phase = manifest.get("expectedFailurePhase")
+
+    ref_paths = {f["path"] for f in material.get("referenceFiles") or []}
+    if "CMakeLists.txt" not in ref_paths and "CMakeLists.txt" not in cumulative_reference:
+        problems.append("参考工程缺少根 CMakeLists.txt")
+    if not test_names and not expected_failure_phase:
+        problems.append("任务未声明任何 CTest 测试（buildManifest.testNames 为空）")
+    if problems:
+        result.problems = problems
+        return result
+
+    # CMake 课程中测试是工程的一部分（CMakeLists 注册 add_test）——
+    # 参考工程 = 前序累积 + 本任务参考实现 + 本任务测试
+    reference_files = merge_files(
+        cumulative_reference,
+        {f["path"]: f["content"] for f in (material.get("referenceFiles") or [])
+         + (material.get("testFiles") or [])},
+    )
+    starter_project = merge_files(
+        cumulative_reference,
+        {f["path"]: f["content"] for f in (material.get("starterFiles") or [])
+         + (material.get("testFiles") or [])},
+    )
+    result.reference_files = reference_files
+    result.test_names = test_names
+
+    # ---- Step 2+3：Configure + File API 目标发现（真实执行）
+    discover = run_cmake_operation(reference_files, mode="run", cmake_action="discover")
+    result.verifications.append(_record("cmake-discovery", discover))
+    if not discover.ok:
+        result.problems.append(
+            "CMake Configure 失败：" + "；".join(
+                d.get("message", "") for d in discover.diagnostics[:3]))
+        return result
+    discovered_names = {t["name"] for t in (discover.cmake or {}).get("targets") or []}
+    missing_targets = [t for t in build_targets if t not in discovered_names]
+    if missing_targets:
+        result.problems.append(
+            f"声明的构建目标未被发现：{', '.join(missing_targets)}"
+            f"（实际：{', '.join(sorted(discovered_names))[:200]}）")
+        result.verifications[-1]["status"] = "failed"
+        return result
+
+    # ---- Step 4+5+7：全量构建 + 参考测试（本任务 required + 前序回归一次跑）
+    required = sorted(set(test_names) | set(prior_test_names))
+    reference_run = run_cmake_operation(
+        reference_files, mode="test", selected_tests=required)
+    result.verifications.append(_record(
+        "reference-tests", reference_run,
+        note=f"required={test_names}" + (f" regression={prior_test_names}" if prior_test_names else ""),
+    ))
+    if not reference_run.ok:
+        failed = [t.get("path") for t in reference_run.test_results or []
+                  if t.get("status") != "passed" and t.get("status") != "skipped"]
+        result.problems.append(
+            f"参考实现测试未通过：{', '.join(failed) or '无结构化结果'}；"
+            + "；".join(d.get("message", "") for d in reference_run.diagnostics[:3]))
+        return result
+
+    # ---- Step 6：starter 预期失败（工程可构建 + 要求的测试失败）
+    starter_run = run_cmake_operation(
+        starter_project, mode="test", selected_tests=test_names)
+    starter_record = _record("starter-expected-fail", starter_run)
+    if expected_failure_phase:
+        # "修复构建"类任务：允许目标性预期失败，需诊断含关键词
+        keywords = manifest.get("expectedFailureKeywords") or []
+        diag_text = " ".join(d.get("message", "") for d in starter_run.diagnostics)
+        phase_failed = any(
+            p.get("name") == expected_failure_phase and p.get("status") == "failed"
+            for p in starter_run.phases)
+        ok = phase_failed and (not keywords or any(k in diag_text for k in keywords))
+        starter_record["status"] = "passed" if ok else "failed"
+        if not ok:
+            result.problems.append(
+                f"starter 未呈现声明的预期失败（{expected_failure_phase}）")
+        result.verifications.append(starter_record)
+        result.passed = ok
+        return result
+
+    build_phase = next((p for p in starter_run.phases if p.get("name") == "build"), {})
+    required_failed = [t for t in starter_run.test_results or []
+                       if t.get("path") in set(test_names)
+                       and t.get("status") in ("failed", "error", "skipped")]
+    if build_phase.get("status") == "failed":
+        starter_record["status"] = "failed"
+        result.problems.append(
+            "starter 工程无法构建（坏工程不是合格 starter）："
+            + "；".join(d.get("message", "") for d in starter_run.diagnostics[:3]))
+        result.verifications.append(starter_record)
+        return result
+    if not required_failed:
+        starter_record["status"] = "failed"
+        result.problems.append(
+            "starter 上全部要求测试通过——测试未覆盖待实现功能（疑似泄露/空转）")
+        result.verifications.append(starter_record)
+        return result
+    starter_record["status"] = "passed"
+    starter_record["note"] = f"预期失败：{[t.get('path') for t in required_failed]}"
+    result.verifications.append(starter_record)
+
+    # ---- Step 8：最终集成（全量测试 + demo 运行）
+    if is_final:
+        full_run = run_cmake_operation(reference_files, mode="test")
+        result.verifications.append(_record("final-integration", full_run))
+        if not full_run.ok:
+            result.problems.append("最终集成验证未通过（全部 CTest）")
+            return result
+        for run_target in run_targets:
+            demo = run_cmake_operation(
+                reference_files, mode="run", cmake_action="run", target_name=run_target)
+            result.verifications.append(_record("demo-run", demo, note=f"target={run_target}"))
+            if not demo.ok:
+                result.problems.append(f"最终演示目标运行失败：{run_target}")
+                return result
+
+    result.passed = True
+    return result

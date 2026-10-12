@@ -14,6 +14,13 @@ import {
 import type { VirtualFS } from '../execution/types'
 import type { CmakeTarget } from '../../api/executions'
 
+export interface CmakeTestEntry {
+  path: string
+  status: 'passed' | 'failed' | 'error' | 'skipped'
+  error?: string
+  cases: Array<{ name: string; status: 'passed' | 'failed' | 'error' | 'skipped'; error?: string; durationMs: number }>
+}
+
 export interface CmakeOutcome {
   ok: boolean
   exitCode: number | null
@@ -22,6 +29,8 @@ export interface CmakeOutcome {
   targets: CmakeTarget[]
   /** test：真实发现的测试名。 */
   discoveredTests: string[]
+  /** test：逐 CTest 测试结果（与测试面板 TestFileResult 同形）。 */
+  testResults: CmakeTestEntry[]
   cmakeVersion: string | null
   generator: string | null
 }
@@ -30,7 +39,7 @@ const CMAKE_TIMEOUT_MS = 120_000
 
 const EMPTY: CmakeOutcome = {
   ok: false, exitCode: null, executionId: null,
-  targets: [], discoveredTests: [], cmakeVersion: null, generator: null,
+  targets: [], discoveredTests: [], testResults: [], cmakeVersion: null, generator: null,
 }
 
 async function runCmakeSession(args: {
@@ -109,6 +118,14 @@ async function runCmakeSession(args: {
       executionId: extras.executionId,
       targets: extras.cmake?.targets ?? [],
       discoveredTests: extras.cmake?.discoveredTests ?? [],
+      testResults: (result.testResults ?? []).map((file) => ({
+        path: file.path,
+        status: file.status,
+        error: file.error,
+        cases: file.cases.map((c) => ({
+          name: c.name, status: c.status, error: c.error, durationMs: c.durationMs,
+        })),
+      })),
       cmakeVersion: extras.cmake?.cmakeVersion ?? null,
       generator: extras.cmake?.generator ?? null,
     }

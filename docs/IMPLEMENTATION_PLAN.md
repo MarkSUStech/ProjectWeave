@@ -71,6 +71,13 @@
 | 7.3 | 学生学习生命周期（任务激活/安全合并/最终验收） | 7.2 | ✅（D43） |
 | 7.4 | C++/TS 课程内容 + Micrograd 学生旅程 E2E + 效果分析 | 7.3 | ⏳ 计划 |
 
+## P8.1.1 + P8.2 C++ AI Course Builder（已完成，D45）
+
+CTest 选择执行语义修复（POSIX ERE 锚点/未选择不判/未知报错/requiredMissing）；
+C++ 课程全链接入：执行档案派生 → CppCMakeLessonBuilder → 八步真实验证 →
+CourseRelease → instantiate 验收契约 → 服务端可信 evaluate → IDE CTest 路由。
+E2E：`tests/test_cpp_course_generation_e2e.py`（Mock LLM 学生旅程 + 真实 LLM 门控）。
+
 ## P8.1 CMake Project Runtime（已完成，D44）
 
 双构建 profile（direct/cmake）+ CMake File API 真实目标发现 + Configure/Build/Run
