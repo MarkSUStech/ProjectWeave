@@ -268,6 +268,38 @@ def _artifact_public(artifact: LessonArtifact) -> dict:
     return data
 
 
+def _prior_failures(db: Session, generation_id, before_version: int) -> dict[str, list[str]]:
+    """收集同一 generation 此前失败 release 的逐任务问题（喂给重试生成的 LLM）。
+
+    artifacts 里通过的条目是 camelCase（model_dump by_alias）、失败条目是
+    snake_case（手工构造），两种键都兼容。
+    """
+    failures: dict[str, list[str]] = {}
+    rows = list(db.scalars(select(CourseRelease).where(
+        CourseRelease.generation_id == generation_id,
+        CourseRelease.release_version < before_version,
+        CourseRelease.status == "failed",
+    )))
+    for row in rows:
+        for art in row.artifacts or []:
+            if art.get("status") != "failed":
+                continue
+            task_id = art.get("taskId") or art.get("task_id") or ""
+            if not task_id:
+                continue
+            problems = failures.setdefault(task_id, [])
+            if art.get("error"):
+                problems.append(str(art["error"])[:300])
+            for rep in (art.get("repairs") or [])[-3:]:
+                if rep.get("problem"):
+                    problems.append(f"修复轮未解决：{str(rep['problem'])[:200]}")
+        # release 级错误兜底（artifact 缺失时至少把总错误挂到失败任务上）
+        tid = (row.verification_report or {}).get("failed_task")
+        if tid and row.error and not failures.get(tid):
+            failures[tid] = [str(row.error)[:300]]
+    return {tid: probs[:6] for tid, probs in failures.items() if probs}
+
+
 def _run_build_inner(release_id: uuid.UUID) -> None:
     with _session() as db:
         release = db.get(CourseRelease, release_id)
@@ -277,6 +309,8 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
         language = release.language
         gen = db.get(CourseGeneration, release.generation_id)
         snapshot_files = (gen.snapshot or {}).get("files", {}) if gen else {}
+        # 重试上下文：此前失败 release 的逐任务问题（喂给本轮 LLM 规避）
+        prior = _prior_failures(db, release.generation_id, release.release_version)
 
     provider = _provider()
     order = _task_order(blueprint)
@@ -302,6 +336,7 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
         material = lesson_builder.build_task_lesson(
             provider, spec, ms_titles.get(spec.get("milestoneId"), ""),
             cumulative_reference, evidence, language,
+            prior_failures=prior.get(task_id),
         )
         repairs: list[dict] = []
         verifications: list[dict] = []

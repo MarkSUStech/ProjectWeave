@@ -450,6 +450,16 @@ export default function CourseGeneratePage() {
           {release.status === 'failed' && release.error && (
             <p role="alert" className="rounded border border-danger/40 bg-danger/10 px-2.5 py-2 text-xs text-danger">{release.error}</p>
           )}
+          {release.status === 'failed' && (
+            <div className="flex items-center gap-3">
+              <Button size="sm" disabled={busy} onClick={() => void startBuildLessons()}>
+                重新生成课程内容（v{release.releaseVersion + 1}）
+              </Button>
+              <span className="text-[11px] text-ink-faint">
+                上次失败的具体原因会反馈给本次生成，AI 将针对性规避
+              </span>
+            </div>
+          )}
           {release.status === 'ready' && (
             <div className="flex items-center gap-3">
               <Button size="sm" disabled={busy} onClick={() => void startLearning()}>

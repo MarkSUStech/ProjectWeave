@@ -333,3 +333,87 @@ def test_release_recover_stale(client: TestClient, build_env, db_session):
     db.commit()
     recovered = lesson_publisher.recover_stale_releases(db)
     assert recovered >= 1
+
+
+def test_build_lessons_retry_feeds_prior_failures(client: TestClient, build_env, db_session):
+    """重试生成（v2）：上一次失败 release 的守卫问题进入新一轮 LLM 提示。"""
+    import time
+    import uuid as _uuid
+
+    from app.domains.course_generation.models import CourseRelease
+
+    provider = build_env[1]
+    prompts: list[str] = []
+    original_chat = provider.chat
+
+    def capture_chat(system, user):
+        prompts.append(user)
+        return original_chat(system, user)
+
+    provider.chat = capture_chat
+
+    gen_id = _seed_published_generation(client, db_session)
+    # 造一个失败的 v1：t1 被防伪守卫拒绝且修复轮未解决
+    db_session.add(CourseRelease(
+        generation_id=_uuid.UUID(gen_id), release_version=1, status="failed",
+        language="python", error="任务 t1 验证失败：防伪守卫：starter 缺少 TODO 标记",
+        artifacts=[{"task_id": "t1", "status": "failed",
+                    "error": "防伪守卫：starter 缺少 TODO 标记（学生无从知道待实现区域）",
+                    "repairs": [{"round": 1, "problem": "防伪守卫：starter 缺少 TODO 标记",
+                                 "outcome": "still-failing"}]}],
+        verification_report={"passed": 0, "total": 9, "failed_task": "t1"},
+    ))
+    db_session.commit()
+
+    resp = client.post(f"/api/v1/course-generations/{gen_id}/build-lessons")
+    assert resp.status_code == 202, resp.text
+    release = resp.json()
+    assert release["releaseVersion"] == 2
+
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        detail = client.get(f"/api/v1/course-releases/{release['id']}").json()
+        if detail["status"] in ("ready", "failed"):
+            break
+        time.sleep(0.2)
+    assert detail["status"] == "ready", detail["error"]
+
+    # t1 的生成提示包含上次的守卫问题；后续任务不携带
+    assert "PRIOR_FAILURES" in prompts[0]
+    assert "starter 缺少 TODO 标记" in prompts[0]
+    assert "PRIOR_FAILURES" not in prompts[1]
+
+
+def test_prior_failures_unit(db_session):
+    """_prior_failures 单元：camelCase/snake_case 条目与 release 级兜底都收集。"""
+    import uuid as _uuid
+
+    from app.domains.course_generation.models import CourseRelease
+
+    gen_id = _uuid.uuid4()
+    db_session.add_all([
+        CourseRelease(
+            generation_id=gen_id, release_version=1, status="ready",
+        ),
+        CourseRelease(
+            generation_id=gen_id, release_version=2, status="failed",
+            error="任务 t2 验证失败：参考实现测试未通过",
+            artifacts=[{"taskId": "t1", "status": "tests-passed"},
+                       {"task_id": "t2", "status": "failed",
+                        "error": "防伪守卫：测试文件没有任何断言",
+                        "repairs": [{"round": 1, "problem": "防伪守卫：测试文件没有任何断言",
+                                     "outcome": "still-failing"}]}],
+            verification_report={"passed": 1, "total": 9, "failed_task": "t2"},
+        ),
+        CourseRelease(
+            generation_id=gen_id, release_version=3, status="failed",
+            error="任务 t3 验证失败：服务重启中断",
+            verification_report={"failed_task": "t3"},  # 无 artifacts → release 级兜底
+        ),
+    ])
+    db_session.commit()
+
+    result = lesson_publisher._prior_failures(db_session, gen_id, before_version=4)
+    assert set(result) == {"t2", "t3"}
+    assert any("断言" in p for p in result["t2"])
+    assert result["t3"] == ["任务 t3 验证失败：服务重启中断"]

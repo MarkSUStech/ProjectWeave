@@ -123,4 +123,50 @@ describe('CourseGeneratePage', () => {
     render(<MemoryRouter><CourseGeneratePage /></MemoryRouter>)
     expect(screen.getByText('开始生成').hasAttribute('disabled')).toBe(true)
   })
+
+  it('release 失败 → 重试按钮 → 再次 build-lessons（v2）', async () => {
+    const releaseBody = (version: number, status: string) => ({
+      id: UUID, generationId: UUID, releaseVersion: version, status,
+      language: 'python', totalTasks: 8, passedTasks: 3, failedTasks: 1,
+      progress: status === 'failed' ? 100 : 5, currentTask: 'task-4-1',
+      error: status === 'failed' ? '任务 task-4-1 验证失败：防伪守卫：starter 缺少 TODO 标记' : null,
+      courseTitle: '从零实现自动微分引擎', readyAt: null,
+      createdAt: '2026-10-11T00:00:00Z',
+    })
+    let builds = 0
+    fetchImpl = async (url, init) => {
+      if (url.endsWith('/course-generations') && init?.method === 'POST') {
+        return jsonResponse({ id: UUID, status: 'pending', progress: 0 }, 202)
+      }
+      if (url.endsWith('/build-lessons') && init?.method === 'POST') {
+        builds += 1
+        return jsonResponse(releaseBody(builds, builds >= 2 ? 'generating' : 'failed'), 202)
+      }
+      if (url.includes(`/course-generations/${UUID}/analysis`)) {
+        return jsonResponse({ status: 'published', analysis: null, toolCalls: [] })
+      }
+      if (url.includes(`/course-generations/${UUID}/blueprint`)) {
+        return jsonResponse({ status: 'published', blueprint: null, validation: null })
+      }
+      if (url.includes(`/course-generations/${UUID}`)) {
+        return jsonResponse(generation({ status: 'published', stage: 'published', progress: 100 }))
+      }
+      return jsonResponse({}, 404)
+    }
+    render(<MemoryRouter><CourseGeneratePage /></MemoryRouter>)
+    const input = screen.getByPlaceholderText(/micrograd/)
+    fireEvent.change(input, { target: { value: 'https://github.com/karpathy/micrograd' } })
+    fireEvent.click(screen.getByText('开始生成'))
+
+    await waitFor(() => expect(screen.getByText('生成课程内容并验证')).toBeTruthy(), { timeout: 3000 })
+    fireEvent.click(screen.getByText('生成课程内容并验证'))
+
+    // v1 失败卡片：错误横幅 + 重试按钮
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy(), { timeout: 3000 })
+    expect(screen.getByText(/重新生成课程内容（v2）/)).toBeTruthy()
+    expect(screen.getByText(/上次失败的具体原因会反馈给本次生成/)).toBeTruthy()
+
+    fireEvent.click(screen.getByText(/重新生成课程内容（v2）/))
+    await waitFor(() => expect(builds).toBe(2), { timeout: 3000 })
+  })
 })
