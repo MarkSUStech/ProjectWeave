@@ -104,3 +104,74 @@ describe('API 调用', () => {
     ).rejects.toThrow('Docker 不可达')
   })
 })
+
+// ---------------------------------------------------------------- P8.1 CMake profile 契约
+
+describe('P8.1 CMake 执行契约', () => {
+  it('cmake discover 快照解析：目标列表 + 生成器信息', () => {
+    const parsed = executionSnapshotSchema.parse({
+      ...FULL_SNAPSHOT,
+      buildSystem: 'cmake',
+      targetName: null,
+      cmake: {
+        operation: 'discover',
+        targets: [
+          {
+            name: 'engine', type: 'STATIC_LIBRARY', runnable: false,
+            sourceDirectory: 'engine', buildDirectory: 'build/engine',
+            sources: ['engine/src/World.cpp'], artifacts: ['build/engine/libengine.a'],
+            dependencies: [], configuration: 'Debug',
+          },
+          {
+            name: 'game', type: 'EXECUTABLE', runnable: true,
+            sourceDirectory: 'game', buildDirectory: 'build/game',
+            sources: ['game/main.cpp'], artifacts: ['build/game/game'],
+            dependencies: ['engine'], configuration: 'Debug',
+          },
+        ],
+        discoveredTests: [],
+        target: null, artifact: null,
+        generator: 'Ninja', cmakeVersion: 'cmake version 3.25.1',
+      },
+    })
+    expect(parsed.buildSystem).toBe('cmake')
+    expect(parsed.cmake?.operation).toBe('discover')
+    expect(parsed.cmake?.targets?.map((t) => t.name)).toEqual(['engine', 'game'])
+    expect(parsed.cmake?.targets?.[1].dependencies).toEqual(['engine'])
+  })
+
+  it('ctest 结果：skipped 状态如实解析（未执行不得并入 failed/passed）', () => {
+    const parsed = executionSnapshotSchema.parse({
+      ...FULL_SNAPSHOT,
+      mode: 'test',
+      buildSystem: 'cmake',
+      testResults: [
+        { path: 'test_world', status: 'passed', cases: [{ name: 'test_world', status: 'passed', error: null, file: null, line: null, durationMs: 5 }], error: null },
+        { path: 'test_terrain', status: 'skipped', cases: [{ name: 'test_terrain', status: 'skipped', error: '未执行（Not Run）', file: null, line: null, durationMs: 0 }], error: '未执行（Not Run）' },
+      ],
+      cmake: { operation: 'test', targets: null, discoveredTests: ['test_world', 'test_terrain'], target: null, artifact: null, generator: 'Ninja', cmakeVersion: 'cmake version 3.25.1' },
+    })
+    expect(parsed.testResults?.[1].status).toBe('skipped')
+    expect(parsed.diagnostics[0].stage ?? null).toBe(null)
+  })
+
+  it('createExecution 透传 cmake 字段', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      void init
+      return jsonResponse({ id: FULL_SNAPSHOT.id, status: 'queued' }, 202)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      await createExecution({
+        language: 'cpp', mode: 'run', files: { 'CMakeLists.txt': '' },
+        buildSystem: 'cmake', cmakeAction: 'run', targetName: 'game',
+      })
+      const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit | undefined)?.body as string)
+      expect(body.buildSystem).toBe('cmake')
+      expect(body.cmakeAction).toBe('run')
+      expect(body.targetName).toBe('game')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

@@ -609,3 +609,44 @@
       **真实 Docker E2E**（PW_SANDBOX_E2E=1，新 test_lesson_docker_e2e.py）：
       micrograd 9 任务全链真沙箱 ready——参考实现真跑 pytest（totalTests>0）、
       starter 期望失败（failedTests>0）、最终集成、实例化全部通过
+
+### P8.1 CMake Project Runtime（D44）
+
+**根因修复**：删除目标猜测（`resolve_cmake_target` 正则解析）与 direct 模式的
+自动 CMake 分支；CMake 成为显式 profile。
+
+- [x] **契约**：`ExecutionCreate` 增 `buildSystem/cmakeAction/targetName/
+      selectedTests`（默认 direct，旧客户端零改动）；`ExecutionRead.cmake`
+      目标列表/测试发现/产物路径/生成器版本；`DiagnosticRead.stage` 阶段
+      细分；`cmake_info` 列 + Alembic 迁移（server_default 兼容存量行）
+- [x] **File API 目标发现**：沙箱内写 codemodel-v2 query → 真实
+      `cmake -S -B -G Ninja -DCMAKE_BUILD_TYPE=Debug` → 解析 reply
+      （index 字典 → codemodel → target 文件）；六类目标类型识别；
+      EXECUTABLE+产物声明 = runnable；缺回复明确报错不伪造
+- [x] **Build/Run**：`cmake --build --target X --parallel 2`（参数数组）；
+      run 产物路径来自 File API 且 realpath 必须在 build 目录内；构建失败
+      → run skipped；未知目标报错并列出已发现目标；非 EXECUTABLE 拒绝运行
+- [x] **CTest**：configure → 全量构建 → `--show-only=json-v1` 发现 →
+      `--output-on-failure --output-junit` 执行 → JUnit 解析（2MB 上界；
+      failure message 为空时回退 system-out）；**0 执行/JUnit 缺失/Not Run
+      一律不判通过**；选择执行 `-R` 逐名转义
+- [x] **诊断**：configure 错误定位 CMakeLists 行号（stage=configure）；
+      编译错误 file:line:col（stage=build，Ninja 输出走 stdout 已合并捕获）；
+      链接错误符号级；阶段序列 configure→build→run/test 如实记录
+- [x] **资源 profile**：`PW_EXECUTION_CMAKE_*`（180s/1GB/2CPU/256pids/
+      512MB tmpfs）服务端限定；全部在既有受限一次性容器内执行
+- [x] **前端**：executions 契约 + cmake schema（skipped 进入契约）；
+      `runCmake.ts` 终端粘合（操作与目标名进终端日志）；IDE `CMakeControls`
+      （Configure/刷新目标、目标选择器按类型标注可运行性、构建/运行/CTest，
+      仅根 CMakeLists.txt 项目显示）；测试面板 skipped（○）独立呈现
+- [x] **验收工程**：`tests/fixtures/sample-cmake-project`（多级子目录 +
+      engine 静态库 + target_include_directories/target_link_libraries +
+      game/inspect 两个可执行 + 2 个 CTest，其中 test_terrain 故意失败）
+- [x] 验证：后端 **303 全过**（+13：File API 解析/契约校验/诊断/各阶段
+      marker/0 执行不通过/未运行标 skipped/build-only 无 run 阶段）；
+      前端 **282 全过**（+7：cmake 契约/discover 目标/选择触发构建运行/
+      库目标禁运行）；**真实 Docker E2E**：cmake **10/10**（多目录 Configure、
+      File API 真实目标、engine 被 game 链接、双可执行目标运行、CTest
+      发现执行、故意失败显示 failed、编译错误行号、configure/build 错误
+      区分、无遗留容器、目标选择执行）+ 旧 C++ **13/13** + LLDB **6/6**
+      不回归

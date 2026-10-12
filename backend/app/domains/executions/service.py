@@ -176,9 +176,12 @@ def validate_create(payload: ExecutionCreate, runner) -> list[str]:
         errors.append("远程执行已禁用（PW_EXECUTION_ENABLED）")
         return errors
 
-    if payload.timeout_ms > settings.execution_max_timeout_ms:
+    is_cmake = payload.build_system == "cmake"
+    timeout_cap = (settings.execution_cmake_max_timeout_ms if is_cmake
+                   else settings.execution_max_timeout_ms)
+    if payload.timeout_ms > timeout_cap:
         errors.append(
-            f"超时上限 {settings.execution_max_timeout_ms}ms，请求 {payload.timeout_ms}ms"
+            f"超时上限 {timeout_cap}ms，请求 {payload.timeout_ms}ms"
         )
 
     file_count = len(payload.files)
@@ -197,17 +200,22 @@ def validate_create(payload: ExecutionCreate, runner) -> list[str]:
         if err:
             errors.append(err)
 
-    if payload.mode == "run":
-        if not payload.entry_point:
-            errors.append("run 模式必须提供 entryPoint")
-        elif payload.entry_point not in payload.files:
-            errors.append(f"入口文件不在 files 中：{payload.entry_point}")
-    else:
-        if not payload.test_paths:
-            errors.append("test 模式必须提供 testPaths")
-        for path in payload.test_paths:
-            if path not in payload.files:
-                errors.append(f"测试文件不在 files 中：{path}")
+    if payload.cmake_action is not None and not is_cmake:
+        errors.append("cmakeAction 仅在 buildSystem=cmake 时有效")
+
+    if not is_cmake:
+        if payload.mode == "run":
+            if not payload.entry_point:
+                errors.append("run 模式必须提供 entryPoint")
+            elif payload.entry_point not in payload.files:
+                errors.append(f"入口文件不在 files 中：{payload.entry_point}")
+        else:
+            if not payload.test_paths:
+                errors.append("test 模式必须提供 testPaths")
+            for path in payload.test_paths:
+                if path not in payload.files:
+                    errors.append(f"测试文件不在 files 中：{path}")
+    # cmake profile 的文件/目标规则由 Runner 校验（CMakeLists.txt / targetName / 测试名）
 
     errors.extend(
         runner.validate_files(
@@ -219,6 +227,10 @@ def validate_create(payload: ExecutionCreate, runner) -> list[str]:
                 files=dict(payload.files),
                 stdin=payload.stdin or "",
                 timeout_s=payload.timeout_ms / 1000,
+                build_system=payload.build_system,
+                cmake_action=payload.cmake_action,
+                target_name=payload.target_name,
+                selected_tests=list(payload.selected_tests),
             )
         )
     )
@@ -256,6 +268,10 @@ def create_execution(db: Session, payload: ExecutionCreate, owner_id: str = "dev
         timeout_ms=payload.timeout_ms,
         code_fingerprint=payload.code_fingerprint,
         files_snapshot=dict(payload.files),
+        build_system=payload.build_system,
+        cmake_action=payload.cmake_action,
+        target_name=payload.target_name,
+        selected_tests=list(payload.selected_tests),
     )
     db.add(row)
     db.commit()
@@ -379,6 +395,10 @@ def _run_worker_inner(db: Session, row: ExecutionSession, handle: _Handle) -> No
         files=dict(row.files_snapshot or {}),
         stdin=row.stdin_text or "",
         timeout_s=row.timeout_ms / 1000,
+        build_system=row.build_system or "direct",
+        cmake_action=row.cmake_action,
+        target_name=row.target_name,
+        selected_tests=list(row.selected_tests or []),
     )
     sandbox_spec = runner.build_spec(spec_input, spec_input.timeout_s)
 
@@ -386,9 +406,16 @@ def _run_worker_inner(db: Session, row: ExecutionSession, handle: _Handle) -> No
     row.started_at = utcnow()
     row.sandbox_engine = get_sandbox_manager().engine
     row.sandbox_image = sandbox_spec.image
-    sandbox_spec.memory_mb = settings.execution_memory_mb
-    sandbox_spec.cpus = settings.execution_cpus
-    sandbox_spec.pids_limit = settings.execution_pids_limit
+    if spec_input.build_system == "cmake":
+        # P8.1：CMake 构建资源 profile（服务端限定，客户端不可请求更高）
+        sandbox_spec.memory_mb = settings.execution_cmake_memory_mb
+        sandbox_spec.cpus = settings.execution_cmake_cpus
+        sandbox_spec.pids_limit = settings.execution_cmake_pids_limit
+        sandbox_spec.tmpfs_size_mb = settings.execution_cmake_tmpfs_mb
+    else:
+        sandbox_spec.memory_mb = settings.execution_memory_mb
+        sandbox_spec.cpus = settings.execution_cpus
+        sandbox_spec.pids_limit = settings.execution_pids_limit
     db.commit()
 
     def _on_output(channel: str, text: str) -> None:
@@ -425,6 +452,7 @@ def _run_worker_inner(db: Session, row: ExecutionSession, handle: _Handle) -> No
     row.diagnostics = outcome.diagnostics
     row.test_results = outcome.test_results
     row.phases = outcome.phases
+    row.cmake_info = outcome.cmake
     row.finished_at = utcnow()
     # 输出事件：流式收集的 + 补齐（假沙箱无回调时从最终输出构造）
     events, _stdout_buf, _stderr_buf = handle.snapshot()
@@ -491,6 +519,8 @@ def to_read_model(row: ExecutionSession, after_seq: int = 0) -> dict:
         "timeout_ms": row.timeout_ms,
         "code_fingerprint": row.code_fingerprint,
         "project_id": row.project_id,
+        "build_system": row.build_system or "direct",
+        "target_name": row.target_name,
         "exit_code": row.exit_code,
         "timed_out": row.timed_out,
         "cancelled": row.cancelled,
@@ -501,6 +531,7 @@ def to_read_model(row: ExecutionSession, after_seq: int = 0) -> dict:
         "diagnostics": row.diagnostics or [],
         "test_results": row.test_results,
         "phases": row.phases or [],
+        "cmake": row.cmake_info,
         "sandbox": {
             "engine": row.sandbox_engine,
             "image": row.sandbox_image,

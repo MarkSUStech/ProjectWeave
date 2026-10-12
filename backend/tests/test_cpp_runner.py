@@ -1,4 +1,4 @@
-"""CppRunner 纯单元测试：诊断解析、源集选择、CMake 目标解析、结果映射（无需 Docker）。"""
+"""CppRunner 纯单元测试：诊断解析、源集选择、CMake 契约校验、结果映射（无需 Docker）。"""
 
 import io
 import json
@@ -6,19 +6,26 @@ import tarfile
 
 from app.domains.executions.languages.base import ExecutionSpecInput
 from app.domains.executions.languages.cpp_driver import (
+    FileApiError,
     find_entry_like_sources,
     is_test_file,
-    resolve_cmake_target,
+    parse_file_api_targets,
     select_run_sources,
     select_test_sources,
 )
-from app.domains.executions.languages.cpp_runner import CppRunner, build_archive, parse_build_diagnostics
+from app.domains.executions.languages.cpp_runner import (
+    CppRunner,
+    build_archive,
+    parse_build_diagnostics,
+    parse_cmake_configure_diagnostics,
+)
 from app.domains.executions.sandbox.base import SandboxResult
 
 runner = CppRunner()
 
 
-def spec(mode="run", entry="src/main.cpp", files=None, test_paths=None, stdin=""):
+def spec(mode="run", entry="src/main.cpp", files=None, test_paths=None, stdin="",
+         build_system="direct", cmake_action=None, target_name=None, selected_tests=None):
     return ExecutionSpecInput(
         exec_id="00000000-0000-0000-0000-000000000002",
         mode=mode,
@@ -27,6 +34,10 @@ def spec(mode="run", entry="src/main.cpp", files=None, test_paths=None, stdin=""
         files=files if files is not None else {"src/main.cpp": "int main() { return 0; }"},
         stdin=stdin,
         timeout_s=20,
+        build_system=build_system,
+        cmake_action=cmake_action,
+        target_name=target_name,
+        selected_tests=selected_tests or [],
     )
 
 
@@ -139,20 +150,63 @@ def test_is_test_file_patterns():
     assert not is_test_file("src/test_util.hpp")
 
 
-def test_resolve_cmake_target_prefers_entry_owner():
-    files = {
-        "CMakeLists.txt": (
-            "add_executable(demo src/math.cpp src/main.cpp)\n"
-            "add_executable(other src/other.cpp)\n"
-        ),
-        "src/main.cpp": "",
-    }
-    assert resolve_cmake_target(files, "src/main.cpp") == "demo"
+# ---------------------------------------------------------------- P8.1 CMake 契约校验
 
 
-def test_resolve_cmake_target_falls_back_to_stem():
-    files = {"CMakeLists.txt": "add_executable(weird src/other.cpp)\n"}
-    assert resolve_cmake_target(files, "src/main.cpp") == "main"
+def test_validate_cmake_requires_root_cmake_lists():
+    errors = runner.validate_files(spec(
+        build_system="cmake", cmake_action="discover", entry=None,
+        files={"src/main.cpp": "int main(){}"}))
+    assert any("CMakeLists.txt" in e for e in errors)
+
+
+def test_validate_cmake_build_run_requires_target():
+    files = {"CMakeLists.txt": "cmake_minimum_required(VERSION 3.16)"}
+    for action in ("build", "run"):
+        errors = runner.validate_files(spec(
+            build_system="cmake", cmake_action=action, entry=None, files=files))
+        assert any("targetName" in e for e in errors), (action, errors)
+    # discover 不需要 target
+    assert runner.validate_files(spec(
+        build_system="cmake", cmake_action="discover", entry=None, files=files)) == []
+
+
+def test_validate_cmake_rejects_bad_test_names():
+    files = {"CMakeLists.txt": "cmake_minimum_required(VERSION 3.16)"}
+    errors = runner.validate_files(spec(
+        mode="test", build_system="cmake", entry=None, files=files,
+        selected_tests=["ok_name", "../escape"]))
+    assert any("非法测试名" in e for e in errors)
+
+
+def test_manifest_carries_cmake_fields():
+    data = build_archive(spec(
+        build_system="cmake", cmake_action="run", target_name="game", entry=None,
+        files={"CMakeLists.txt": ""}), 60)
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        manifest = json.load(tar.extractfile("__pw/manifest.json"))
+    assert manifest["buildSystem"] == "cmake"
+    assert manifest["cmakeAction"] == "run"
+    assert manifest["targetName"] == "game"
+    # direct 模式不受影响
+    direct = build_archive(spec(), 20)
+    with tarfile.open(fileobj=io.BytesIO(direct), mode="r:gz") as tar:
+        assert json.load(tar.extractfile("__pw/manifest.json"))["buildSystem"] == "direct"
+
+
+def test_parse_cmake_configure_error_location():
+    stderr = (
+        "CMake Error at CMakeLists.txt:7 (add_executable):\n"
+        "  Cannot find source file:\n"
+        "    missing.cpp\n"
+    )
+    diags = parse_cmake_configure_diagnostics(stderr)
+    assert diags and diags[0]["file"] == "CMakeLists.txt"
+    assert diags[0]["line"] == 7
+    assert diags[0]["stage"] == "configure"
+    # 无结构化错误行时兜底给摘要
+    fallback = parse_cmake_configure_diagnostics("Some fatal configuration problem\n")
+    assert fallback and "CMake 配置失败" in fallback[0]["message"]
 
 
 # ---------------------------------------------------------------- 规格与映射

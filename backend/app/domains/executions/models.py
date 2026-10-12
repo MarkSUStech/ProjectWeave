@@ -78,6 +78,14 @@ class ExecutionSession(Base):
     sandbox_engine: Mapped[str | None] = mapped_column(String(20), nullable=True)
     sandbox_image: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
+    # ---- P8.1 CMake 项目 profile ----
+    build_system: Mapped[str] = mapped_column(String(10), default="direct")
+    cmake_action: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    target_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    selected_tests: Mapped[list] = mapped_column(JSONType, default=list)
+    # CMake 结构化结果（目标列表/产物路径/生成器版本；direct 模式为 NULL）。
+    cmake_info: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

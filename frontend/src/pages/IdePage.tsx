@@ -33,6 +33,7 @@ import { CommandPalette } from '../components/ide/CommandPalette'
 import { WorkspaceNoticeStrip } from '../components/ide/WorkspaceNoticeStrip'
 import { TaskPanel } from '../components/ide/TaskPanel'
 import { DebugPanel } from '../components/ide/DebugPanel'
+import { CMakeControls } from '../components/ide/CMakeControls'
 import { useDebugStore } from '../stores/debugStore'
 import type { PatchApplyResult } from '../lib/workspace/executor'
 import type { PlanTask } from '../types/plan'
@@ -507,6 +508,12 @@ function IdeWorkspace({ project }: { project: Project }) {
     <IdeTopBar project={project} commands={<><CommandPalette files={files} onOpenFile={handleOpenFile}
       onSave={() => void save()} onRun={handleRun} canSave={!!openPath && dirty && !saving}
       canRun={!!openPath && canRunPath(openPath) && !running && !testsRunning} /><WorkspaceViewMenu /></>} />
+    <CMakeControls
+      projectId={project.id}
+      files={files}
+      buildVfs={buildProjectVfs}
+      onRevealTerminal={() => layout?.reveal('terminal')}
+    />
     <WorkspaceNoticeStrip projectId={project.id} onApplyPatch={applyPatch} />
     <div className="min-h-0 flex-1">
       <WorkspaceLayout mode={mode} projectId={project.id} panels={{

@@ -213,6 +213,7 @@ def test_g_test_compile_failure_is_error(e2e_client: TestClient):
 
 
 def test_h_cmake_ninja_multi_file(e2e_client: TestClient):
+    """P8.1 起走显式 CMake profile（buildSystem=cmake + File API 发现的目标）。"""
     files = {
         "CMakeLists.txt": (
             "cmake_minimum_required(VERSION 3.20)\n"
@@ -224,22 +225,28 @@ def test_h_cmake_ninja_multi_file(e2e_client: TestClient):
         "src/math.cpp": '#include "math.hpp"\nint add(int a, int b) { return a + b; }\n',
         "src/main.cpp": '#include <iostream>\n#include "math.hpp"\nint main() { std::cout << "cmake:" << add(20, 2) << std::endl; }\n',
     }
-    final = _wait(e2e_client, _create(e2e_client, files=files), timeout_s=120)
+    exec_id = _create(e2e_client, files=files, entryPoint=None, timeoutMs=120000,
+                      buildSystem="cmake", cmakeAction="run", targetName="demo")
+    final = _wait(e2e_client, exec_id, timeout_s=180)
     assert final["status"] == "completed"
     assert final["exitCode"] == 0
     assert "cmake:22" in final["stdout"]
+    assert final["cmake"]["artifact"] == "build/demo"
 
 
 def test_h_cmake_config_failure_distinguished(e2e_client: TestClient):
-    # CMake 配置失败（语法错误）→ build failed + run skipped，不冒充运行结果
+    # CMake 配置失败（语法错误）→ configure failed + build/run skipped，不冒充运行结果
     files = {
         "CMakeLists.txt": "this_is_not_cmake_syntax(\n",
         "src/main.cpp": HELLO,
     }
-    final = _wait(e2e_client, _create(e2e_client, files=files), timeout_s=120)
+    exec_id = _create(e2e_client, files=files, entryPoint=None, timeoutMs=120000,
+                      buildSystem="cmake", cmakeAction="run", targetName="demo")
+    final = _wait(e2e_client, exec_id, timeout_s=180)
     assert final["exitCode"] != 0
     phases = {p["name"]: p for p in final["phases"]}
-    assert phases["build"]["status"] == "failed"
+    assert phases["configure"]["status"] == "failed"
+    assert phases["build"]["status"] == "skipped"
     assert phases["run"]["status"] == "skipped"
 
 

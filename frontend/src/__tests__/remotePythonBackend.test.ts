@@ -98,7 +98,7 @@ describe('executeRemoteWithStream', () => {
     expect(remotePythonBackend.capabilities.maxTrustLevel).toBe('practice')
   })
 
-  it('pytest 结果映射：error/skipped 用例归并为 failed，文件级 error 保留', async () => {
+  it('pytest 结果映射：error 归并为 failed、skipped 如实保留（P8.1 起不伪装），文件级 error 保留', async () => {
     mockedCreate.mockResolvedValue({ id: '00000000-0000-4000-8000-000000000002', status: 'queued' })
     mockedGet.mockResolvedValue(
       snapshot({
@@ -130,7 +130,7 @@ describe('executeRemoteWithStream', () => {
     expect(returned.ok).toBe(false)
     expect(returned.testResults).toHaveLength(2)
     const cases = returned.testResults![0].cases
-    expect(cases.map((c) => c.status)).toEqual(['passed', 'failed', 'failed'])
+    expect(cases.map((c) => c.status)).toEqual(['passed', 'failed', 'skipped'])
     expect(cases[1].error).toBe('assert 3 == 2')
     expect(returned.testResults![1].status).toBe('error')
   })

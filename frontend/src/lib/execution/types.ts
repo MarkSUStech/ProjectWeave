@@ -57,14 +57,14 @@ export interface ConsoleOutput {
 
 export interface TestCaseOutcome {
   name: string
-  status: 'passed' | 'failed'
+  status: 'passed' | 'failed' | 'skipped'
   error?: string
   durationMs: number
 }
 
 export interface TestFileOutcome {
   path: string
-  status: 'passed' | 'failed' | 'error'
+  status: 'passed' | 'failed' | 'error' | 'skipped'
   cases: TestCaseOutcome[]
   error?: string
 }

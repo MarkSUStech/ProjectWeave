@@ -617,3 +617,20 @@
 **前端**：TaskPanel 课程项目显示生命周期徽标（🔒/可开始/●/✔）；locked 任务显示前置依赖；available 任务显示「开始任务」按钮；active/needs-fix 任务显示原有测试按钮。
 
 **验证**：后端 **282 全过**（+14：三方合并六案例、锁定拒绝、完成解锁、幂等激活、冲突报告、最终验收、H4 隔离、候选概念降级、非课程项目兼容）；前端 274 全过。
+
+## D44 · CMake Project Runtime：双构建 profile + File API 目标发现 + CTest 真实流程
+
+**日期**：2026-10-12。
+
+**背景**：P4.2c 的 CMake 支持靠正则解析 `add_executable` 猜目标、test 模式拼接编译，无法承载真实多模块 C++ 工程；课程生成器（P7）也无法复用一条可靠的构建测试链路。
+
+**决策**：
+
+- **双 Build Profile**：`buildSystem=direct`（默认，clang++ 直接编译，完全向后兼容）与 `buildSystem=cmake`（CMake 项目流程）。direct 模式不再自动探测 CMakeLists.txt——目标猜测（`resolve_cmake_target`）删除，CMake 必须显式选择 profile。
+- **目标发现用 CMake File API（codemodel-v2）**：容器内写 query → 真实 `cmake -S -B -G Ninja` → 解析 `build/.cmake/api/v1/reply/`。目标类型/源/产物/依赖全部来自真实 codemodel（实物验证：`index.reply` 为字典、`paths/sources` 相对顶层源目录、`artifacts` 相对 build 目录）。File API 缺失/非法 → 明确错误，绝不伪造目标列表。
+- **四操作**：`cmakeAction=discover|build|run` + `mode=test`（CTest）。run 的产物路径必须来自 File API 且 realpath 位于构建目录内；构建失败不进入 run；非 EXECUTABLE 目标拒绝运行并列出已发现目标。
+- **CTest**：`--show-only=json-v1` 发现 + `--output-junit` 执行；JUnit 解析有界（2MB/解析失败→错误）；**0 个测试执行、JUnit 缺失、有 Not Run → 一律不判通过**。选择执行用逐名 `re.escape` 拼 `-R` 正则（无 shell 拼接）。
+- **安全不变**：所有 CMake 操作在既有受限一次性容器内（非 root/无网/只读根/exec tmpfs/cap-drop/资源上限）；新增独立资源 profile（`PW_EXECUTION_CMAKE_*`：timeout 180s、1GB 内存、2 CPU、256 pids、512MB tmpfs），服务端限定，客户端不可请求更高。
+- **契约**：`ExecutionCreate` 增 `buildSystem/cmakeAction/targetName/selectedTests`（全部可选，默认 direct 旧行为）；`ExecutionRead` 增 `cmake`（targets/discoveredTests/artifact/generator/cmakeVersion）；`DiagnosticRead` 增 `stage`（configure/compile/link/run/test）。`skipped` 进入测试状态契约（未执行不得伪装成 failed/passed）。
+
+**后果**：一次性容器意味着每次操作全量 Configure+Build（无增量缓存）——接口已按操作拆分，为 P8.2+ 的安全增量构建预留。CMake 目标的 LLDB 调试衔接留待后续（现有 direct 调试不回归，前端如实显示限制）。

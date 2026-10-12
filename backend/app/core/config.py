@@ -52,6 +52,16 @@ class Settings(BaseSettings):
     execution_cpus: float = 1.0
     execution_pids_limit: int = 128
 
+    # --- CMake 项目构建 profile（P8.1，D44）---
+    # CMake Configure/Build/CTest 比普通脚本执行更重：独立上限（服务端限定，
+    # 客户端只能在其内请求；仍受全局开关与并发池约束）。
+    execution_cmake_max_timeout_ms: int = 180000
+    execution_cmake_memory_mb: int = 1024
+    execution_cmake_cpus: float = 2.0
+    execution_cmake_pids_limit: int = 256
+    # 构建工作区 tmpfs（源码 + 构建目录 + 工具链临时文件）。
+    execution_cmake_tmpfs_mb: int = 512
+
     # --- 交互式调试会话（P4.5a，D36）---
     # 无客户端活动（无轮询/指令）的空闲回收秒数。
     debug_idle_timeout_seconds: int = 600

@@ -22,10 +22,12 @@ class ParsedOutcome:
     diagnostics: list[dict[str, Any]] = field(default_factory=list)
     # 测试结果（仅 test 模式）
     test_results: list[dict[str, Any]] | None = None
-    # 阶段记录（run 单阶段；C++ 未来 build+run）
+    # 阶段记录（run 单阶段；C++ build+run；CMake configure/build/run/test）
     phases: list[dict[str, Any]] = field(default_factory=list)
     # 协议错误信息（如结果标记解析失败）
     protocol_error: str | None = None
+    # CMake profile 结构化结果（目标发现/产物路径；direct 模式为 None）
+    cmake: dict[str, Any] | None = None
 
 
 @dataclass
@@ -39,6 +41,11 @@ class ExecutionSpecInput:
     files: dict[str, str]
     stdin: str
     timeout_s: float
+    # ---- P8.1 构建系统 profile（direct = 旧行为）----
+    build_system: str = "direct"
+    cmake_action: str | None = None  # discover | build | run（cmake + mode=run）
+    target_name: str | None = None
+    selected_tests: list[str] = field(default_factory=list)
 
 
 class LanguageRunner(Protocol):

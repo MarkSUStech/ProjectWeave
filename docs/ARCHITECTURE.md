@@ -72,7 +72,13 @@
 - **领域模块** `app/domains/executions/`（P4.2b，远程执行沙箱，D32/D33）：
   - `models.py`：`execution_sessions` 表（状态机 queued→preparing→running→completed|failed|timed-out|cancelled、文件快照 JSONB、stdout/stderr/事件流/诊断/测试结果/阶段、沙箱引擎与镜像、排队/开始/结束时间）。
   - `sandbox/`：`SandboxManager` 协议（available/run/cleanup_stale）+ `DockerSandboxManager`——一次性容器：`--network none`、`--read-only` + tmpfs（属主 10001；**工作区执行策略语言专属 D34**：Python `noexec`，C++ `exec` 由服务端 `SandboxSpec.exec_workspace` 声明，客户端不可控）、非 root、cap-drop ALL、no-new-privileges、memory/cpu/pids 限额、stdin gzip-tar 注入、`pw.sandbox` 标签追踪 + 启动清理 + 用后即毁；gVisor/微 VM 未来同协议接入。
-  - `languages/`：`LanguageRunner` 协议（validate_files / build_spec / parse_result——语言差异全部在此，公共服务零语言逻辑）+ `PythonRunner`（CPython 3.12 + pytest 镜像；driver 随执行注入 tar；pytest Recorder 插件逐用例 file/line/失败消息；traceback 确定性解析）+ **`CppRunner`（P4.2c/D35：Clang 15 / C++20，多翻译单元真实编译链接[源集策略见 D35]，编译参数服务端固定，clang 行诊断与 GNU ld/lld 链接错误解析为 file:line:col，CMakeLists 存在时 cmake -G Ninja 构建包含入口的目标，测试=独立可执行程序[通过=退出 0 且有输出，空测试不判通过]，编译失败 run 阶段显式 skipped）**。
+  - `languages/`：`LanguageRunner` 协议（validate_files / build_spec / parse_result——语言差异全部在此，公共服务零语言逻辑）+ `PythonRunner`（CPython 3.12 + pytest 镜像；driver 随执行注入 tar；pytest Recorder 插件逐用例 file/line/失败消息；traceback 确定性解析）+ **`CppRunner`（P4.2c/D35：Clang 15 / C++20，多翻译单元真实编译链接[源集策略见 D35]，编译参数服务端固定，clang 行诊断与 GNU ld/lld 链接错误解析为 file:line:col，测试=独立可执行程序[通过=退出 0 且有输出，空测试不判通过]，编译失败 run 阶段显式 skipped）** + **CMake 项目 profile（P8.1/D44）**：
+    - 双 profile：`buildSystem=direct`（默认，clang++ 直编，零破坏）/`buildSystem=cmake`（`cmakeAction=discover|build|run` + `mode=test` 走 CTest）；
+    - 目标发现 = CMake File API codemodel-v2（容器内写 query → 真实 Configure → 解析 reply；类型/源/产物/依赖全真数据，缺失即报错不伪造）；
+    - run 产物路径来自 File API 且 realpath 必须位于 build 目录；构建失败→run skipped；非 EXECUTABLE 拒绝运行；
+    - CTest：`--show-only=json-v1` 发现 + `--output-junit` 执行（JUnit 解析有界；**0 执行/JUnit 缺失/Not Run 不判通过**；选择执行 `-R` 逐名转义）；
+    - 独立资源 profile `PW_EXECUTION_CMAKE_*`（180s/1GB/2CPU/256pids/512MB tmpfs，服务端限定）；诊断带 `stage`（configure/build/run/test），CMake Configure 错误定位 CMakeLists 行号；
+    - 验收工程 `tests/fixtures/sample-cmake-project`（多子目录 + 静态库 + 双可执行 + 2 CTest）。
   - `service.py`：会话编排（通用路径校验拒绝绝对/`..`/反斜杠/盘符/保留名/`__pw`、文件数/总字节/stdin/超时/输出上限）、线程池执行（并发上限）、300ms 节流流式落库、终态写入 + `execution-finished` 服务端事件（幂等）；**信任级固定 practice**（服务端执行 ≠ 正式认证）；沙箱不可用 503。
   - `router.py`：`POST /executions`（202）、`GET /executions/{id}?afterSeq=`（增量事件，SSE 预留）、`POST /executions/{id}/cancel`（幂等）。
   - 镜像：`backend/sandbox/python/Dockerfile` 与 `backend/sandbox/cpp/Dockerfile`（构建命令与隔离参数表见 `backend/sandbox/README.md`）。
@@ -115,7 +121,7 @@
 | GET | /api/v1/tutor/suggestions?projectId= | 主动建议（quiet 拒绝/连续失败证据/60s 冷却，拉取式） |
 | GET | /api/v1/tutor/decisions?projectId= | 教学决策历史（含 outcome 与 token 用量） |
 | GET / PATCH | /api/v1/settings | 用户 AI 偏好（interventionMode：quiet/adaptive/guided） |
-| POST | /api/v1/executions | 创建远程执行（202 排队；Python run/test；沙箱不可用 503；校验失败 422） |
+| POST | /api/v1/executions | 创建远程执行（202 排队；Python run/test；C++ direct run/test + CMake profile：buildSystem=cmake 时 cmakeAction=discover/build/run 或 mode=test 走 CTest；沙箱不可用 503；校验失败 422） |
 | GET | /api/v1/executions/{id}?afterSeq= | 执行会话查询（状态/输出/诊断/测试结果/phases；afterSeq 增量事件轮询） |
 | POST | /api/v1/executions/{id}/cancel | 取消执行（幂等；终态返回当前状态） |
 | POST | /api/v1/debug-sessions | 创建 C++ 调试会话（201；编译失败→terminated/build-failed，不启动调试器） |

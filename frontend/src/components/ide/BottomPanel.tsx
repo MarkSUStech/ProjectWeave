@@ -236,8 +236,8 @@ export function TestView({ onRun }: { onRun: () => void }) {
                 {file.cases.map((testCase, index) => (
                   <li key={index} className="border-b border-edge-soft/50 px-2.5 py-1 last:border-b-0">
                     <div className="flex items-start justify-between gap-3">
-                      <span className={testCase.status === 'passed' ? 'text-ok' : 'text-danger'}>
-                        {testCase.status === 'passed' ? '✔' : '✘'} {testCase.name}
+                      <span className={testCase.status === 'passed' ? 'text-ok' : testCase.status === 'skipped' ? 'text-warn' : 'text-danger'}>
+                        {testCase.status === 'passed' ? '✔' : testCase.status === 'skipped' ? '○' : '✘'} {testCase.name}
                       </span>
                       <span className="shrink-0 text-[10px] text-ink-faint">{testCase.durationMs}ms</span>
                     </div>

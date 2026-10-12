@@ -109,8 +109,9 @@ function snapshotToResult(snap: ExecutionSnapshot, request: ExecutionRequest): E
         error: file.error ?? undefined,
         cases: file.cases.map((c) => ({
           name: c.name,
-          // 契约层用例只有 passed/failed；远程的 error/skipped 归并为 failed（error 保留消息）
-          status: c.status === 'passed' ? ('passed' as const) : ('failed' as const),
+          // skipped（未执行/被过滤）如实透传，不得伪装成失败或通过
+          status: c.status === 'passed' ? ('passed' as const)
+            : c.status === 'skipped' ? ('skipped' as const) : ('failed' as const),
           error: c.error ?? undefined,
           durationMs: c.durationMs,
         })),
@@ -152,11 +153,20 @@ export interface RemoteExecutionExtras {
   timedOut: boolean
   cancelled: boolean
   runTimeMs: number
+  /** P8.1：CMake profile 结构化结果（目标列表/产物路径；direct 为 null）。 */
+  cmake: ExecutionSnapshot['cmake']
 }
 
-/** 带流式回调的执行（终端实时输出）。 */
+/** 带流式回调的执行（终端实时输出）。P8.1 起透传 CMake profile 字段。 */
 export async function executeRemoteWithStream(
-  request: ExecutionRequest & { stdin?: string; projectId?: string },
+  request: ExecutionRequest & {
+    stdin?: string
+    projectId?: string
+    buildSystem?: 'direct' | 'cmake'
+    cmakeAction?: 'discover' | 'build' | 'run'
+    targetName?: string
+    selectedTests?: string[]
+  },
   onEvent?: (channel: 'stdout' | 'stderr' | 'system', text: string) => void,
   onCreated?: (executionId: string) => void,
 ): Promise<ExecutionResult & { extras: RemoteExecutionExtras }> {
@@ -170,6 +180,10 @@ export async function executeRemoteWithStream(
     timeoutMs: request.timeoutMs,
     codeFingerprint: request.codeFingerprint,
     projectId: request.projectId,
+    buildSystem: request.buildSystem,
+    cmakeAction: request.cmakeAction,
+    targetName: request.targetName,
+    selectedTests: request.selectedTests,
   })
   activeExecutionId = created.id
   onCreated?.(created.id)
@@ -194,6 +208,7 @@ export async function executeRemoteWithStream(
           timedOut: snap.timedOut,
           cancelled: snap.cancelled,
           runTimeMs: snap.runTimeMs,
+          cmake: snap.cmake,
         },
       }
     }

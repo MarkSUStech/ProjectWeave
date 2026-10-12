@@ -71,6 +71,13 @@
 | 7.3 | 学生学习生命周期（任务激活/安全合并/最终验收） | 7.2 | ✅（D43） |
 | 7.4 | C++/TS 课程内容 + Micrograd 学生旅程 E2E + 效果分析 | 7.3 | ⏳ 计划 |
 
+## P8.1 CMake Project Runtime（已完成，D44）
+
+双构建 profile（direct/cmake）+ CMake File API 真实目标发现 + Configure/Build/Run
++ CTest（JUnit）+ 独立资源边界 + IDE CMake 控件。真实 Docker E2E 验收于
+`tests/test_executions_cmake_e2e.py`（多模块 sample-cmake-project）。
+后续：P8.2 C++ Course Builder 复用本运行时（CMake 课程材料经真实 CTest 验证）。
+
 ## P4 打磨与试点 —— 完整用户旅程与学习效果测量
 
 恢复/导出、可观测性（token 用量/延迟/场景命中率）、安全渗透测试、性能验证、小样本试点与对照实验。

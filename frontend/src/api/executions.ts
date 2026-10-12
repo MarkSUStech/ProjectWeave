@@ -41,6 +41,31 @@ export const diagnosticSchema = z.object({
   line: z.number().int().nullable().default(null),
   column: z.number().int().nullable().default(null),
   source: z.enum(['build', 'runtime', 'test']).default('runtime'),
+  // P8.1：构建阶段细分（configure | compile | link | run | test | …）
+  stage: z.string().nullable().default(null),
+})
+
+/** P8.1：CMake File API 发现的目标（真实 codemodel 数据）。 */
+export const cmakeTargetSchema = z.object({
+  name: z.string(),
+  type: z.string(),
+  runnable: z.boolean(),
+  sourceDirectory: z.string().default(''),
+  buildDirectory: z.string().default(''),
+  sources: z.array(z.string()).default([]),
+  artifacts: z.array(z.string()).default([]),
+  dependencies: z.array(z.string()).default([]),
+  configuration: z.string().default(''),
+})
+
+export const cmakeInfoSchema = z.object({
+  operation: z.string(),
+  targets: z.array(cmakeTargetSchema).nullable().default(null),
+  discoveredTests: z.array(z.string()).default([]),
+  target: z.string().nullable().default(null),
+  artifact: z.string().nullable().default(null),
+  generator: z.string().nullable().default(null),
+  cmakeVersion: z.string().nullable().default(null),
 })
 
 export const testCaseSchema = z.object({
@@ -54,7 +79,7 @@ export const testCaseSchema = z.object({
 
 export const testFileSchema = z.object({
   path: z.string(),
-  status: z.enum(['passed', 'failed', 'error']),
+  status: z.enum(['passed', 'failed', 'error', 'skipped']),
   cases: z.array(testCaseSchema).default([]),
   error: z.string().nullable().default(null),
 })
@@ -69,6 +94,9 @@ export const executionSnapshotSchema = z.object({
   timeoutMs: z.number().int(),
   codeFingerprint: z.string().nullable().default(null),
   projectId: z.string().uuid().nullable().default(null),
+  buildSystem: z.enum(['direct', 'cmake']).default('direct'),
+  targetName: z.string().nullable().default(null),
+  cmake: cmakeInfoSchema.nullable().default(null),
   exitCode: z.number().int().nullable().default(null),
   timedOut: z.boolean().default(false),
   cancelled: z.boolean().default(false),
@@ -106,6 +134,8 @@ export type ExecutionSnapshot = z.infer<typeof executionSnapshotSchema>
 export type RemoteDiagnostic = z.infer<typeof diagnosticSchema>
 export type RemoteTestCase = z.infer<typeof testCaseSchema>
 export type RemoteTestFile = z.infer<typeof testFileSchema>
+export type CmakeTarget = z.infer<typeof cmakeTargetSchema>
+export type CmakeInfo = z.infer<typeof cmakeInfoSchema>
 
 export interface CreateExecutionInput {
   language: string
@@ -117,6 +147,11 @@ export interface CreateExecutionInput {
   timeoutMs?: number
   codeFingerprint?: string
   projectId?: string
+  /** P8.1：构建系统 profile（direct 默认 = 旧行为；cmake = CMake 项目流程）。 */
+  buildSystem?: 'direct' | 'cmake'
+  cmakeAction?: 'discover' | 'build' | 'run'
+  targetName?: string
+  selectedTests?: string[]
 }
 
 export async function createExecution(input: CreateExecutionInput): Promise<{ id: string; status: ExecutionStatus }> {

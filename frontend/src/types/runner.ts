@@ -53,14 +53,14 @@ export type RunStatus = 'ok' | 'error' | 'unsupported' | 'timeout'
 /** 测试面板的领域模型（主线程聚合后）。 */
 export interface TestCaseResult {
   name: string
-  status: 'passed' | 'failed'
+  status: 'passed' | 'failed' | 'skipped'
   error?: string
   durationMs: number
 }
 
 export interface TestFileResult {
   path: string
-  status: 'passed' | 'failed' | 'error'
+  status: 'passed' | 'failed' | 'error' | 'skipped'
   /** status=error（加载/执行失败）时的原因。 */
   error?: string
   cases: TestCaseResult[]
