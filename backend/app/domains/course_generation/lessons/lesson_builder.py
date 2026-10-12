@@ -97,6 +97,7 @@ CPP_CMAKE_LESSON_SYSTEM_PROMPT = """你是 ProjectWeave 的 C++ 课程内容工�
 2. **目标体系**：engine 为 STATIC_LIBRARY（target_include_directories(engine PUBLIC include)）；app/demo 为 EXECUTABLE 并 target_link_libraries PRIVATE engine；测试为独立可执行（add_executable + target_link_libraries + add_test NAME xxx COMMAND 可执行名）；enable_testing() 只在根 CMakeLists 出现一次；
 3. **头文件与实现分离**：类声明在 include/engine/ 下 .hpp，实现放 src/ 同名 .cpp；#include 用 "engine/Xxx.hpp"；
 4. **starter 挖空**：starter = 参考工程挖去本任务**新增**核心逻辑——被挖函数体写成 `{ /* TODO: 描述要实现什么 */ }` 或返回默认值并留 `// TODO: 描述`；头文件、CMakeLists、前序任务已完成代码原样保留；自检：把 starter 代入本任务测试——**要求执行的测试必须失败**（功能未实现），但工程必须能 Configure 成功且测试可执行目标能**编译链接通过**（不能给坏工程）；
+   - **expectedFiles 只列学生必须实现核心逻辑的翻译单元**（挖空的 .cpp）——与本任务测试覆盖的行为一一对应；完整给定的入口/演示 main.cpp、头文件、CMakeLists **不要**列入 expectedFiles（列入即被防伪守卫判答案泄露）；
 5. **测试**：C++20 轻量断言测试（cassert 的 assert），一个测试文件一个 main，覆盖本任务新增功能；浮点比较用容差（std::abs(a-b) < 1e-9）；禁止 assert(true) 空转；禁止第三方测试框架；
 6. **buildManifest 真实**：buildTargets/testNames 与你写的 CMakeLists 完全一致（验证器会用 CMake File API 与 CTest 实际校验，编造名字直接失败）；runTargets 仅最终集成任务填 demo 可执行目标；
 7. **中文说明、英文代码与目标名**；hints 的 H1-H3 不含完整代码（H4 允许参考级）；说明字段各 ≤120 字。"""
