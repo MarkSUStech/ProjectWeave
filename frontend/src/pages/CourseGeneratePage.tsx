@@ -3,7 +3,7 @@
  * （里程碑/任务/依赖图/证据/验证）→ 发布。全部数据来自真实后端记录。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   buildLessons,
   createCourseGeneration,
@@ -23,7 +23,7 @@ import {
   type TaskSpec,
   type ValidationInfo,
 } from '../api/courseGeneration'
-import { ApiError } from '../api/client'
+import { api, ApiError } from '../api/client'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { ErrorBanner, Spinner } from '../components/ui/Feedback'
@@ -35,6 +35,15 @@ const KIND_BADGES: Record<string, { text: string; tone: 'ok' | 'warn' | 'neutral
 }
 
 export default function CourseGeneratePage() {
+  const [searchParams] = useSearchParams()
+  const descSpec = searchParams.get('title') ? {
+    title: searchParams.get('title') || '',
+    description: searchParams.get('description') || '',
+    mode: searchParams.get('mode') || 'rebuild',
+    complexity: searchParams.get('complexity') || 'medium',
+    stack: (searchParams.get('stack') || '').split(',').filter(Boolean),
+    projectId: searchParams.get('projectId'),
+  } : null
   const [url, setUrl] = useState('')
   const [gen, setGen] = useState<CourseGeneration | null>(null)
   const [analysis, setAnalysis] = useState<RepositoryAnalysis | null>(null)
@@ -97,14 +106,20 @@ export default function CourseGeneratePage() {
     setError(null)
     setBusy(true)
     try {
-      const { id } = await createCourseGeneration(url.trim())
+      let id: string
+      if (descSpec) {
+        const data = await api.post<unknown>('/course-generations/from-project', descSpec)
+        id = (data as { id: string }).id
+      } else {
+        id = (await createCourseGeneration(url.trim())).id
+      }
       setGen(await getCourseGeneration(id))
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err))
     } finally {
       setBusy(false)
     }
-  }, [url])
+  }, [url, descSpec])
 
   const publish = useCallback(async () => {
     if (!gen) return
@@ -169,20 +184,35 @@ export default function CourseGeneratePage() {
       </p>
 
       {/* 输入 */}
-      <div className="mb-6 flex gap-2">
-        <input
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-          placeholder="https://github.com/karpathy/micrograd"
-          className="min-w-0 flex-1 rounded-md border border-edge-soft bg-panel px-3 py-2 font-mono text-xs text-ink placeholder:text-ink-faint/60"
-          disabled={busy || (!!gen && !TERMINAL_STATUSES.has(gen.status))}
-        />
-        {!gen || TERMINAL_STATUSES.has(gen.status) ? (
-          <Button size="sm" disabled={busy || !url.trim()} onClick={() => void submit()}>
-            {busy ? '提交中…' : '开始生成'}
-          </Button>
-        ) : null}
-      </div>
+      {descSpec ? (
+        <div className="mb-6 rounded-lg border border-accent/40 bg-accent-soft/50 p-4">
+          <p className="mb-1 text-sm font-medium text-ink">{descSpec.title}</p>
+          {descSpec.description && <p className="mb-2 text-xs leading-5 text-ink-dim">{descSpec.description}</p>}
+          <div className="flex flex-wrap gap-1">
+            {descSpec.stack.map((s) => <Badge key={s}>{s}</Badge>)}
+          </div>
+          {!gen || TERMINAL_STATUSES.has(gen.status) ? (
+            <Button size="sm" className="mt-3" disabled={busy} onClick={() => void submit()}>
+              {busy ? 'AI 正在分析…' : '开始 AI 生成课程'}
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mb-6 flex gap-2">
+          <input
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            placeholder="https://github.com/karpathy/micrograd"
+            className="min-w-0 flex-1 rounded-md border border-edge-soft bg-panel px-3 py-2 font-mono text-xs text-ink placeholder:text-ink-faint/60"
+            disabled={busy || (!!gen && !TERMINAL_STATUSES.has(gen.status))}
+          />
+          {!gen || TERMINAL_STATUSES.has(gen.status) ? (
+            <Button size="sm" disabled={busy || !url.trim()} onClick={() => void submit()}>
+              {busy ? '提交中…' : '开始生成'}
+            </Button>
+          ) : null}
+        </div>
+      )}
       {error && <ErrorBanner message={error} onRetry={() => setError(null)} />}
 
       {/* 进度 */}

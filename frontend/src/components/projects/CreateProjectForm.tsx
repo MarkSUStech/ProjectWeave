@@ -4,6 +4,7 @@ import { Button } from '../ui/Button'
 import { createProject } from '../../api/projects'
 import { ApiError } from '../../api/client'
 import type { ProjectComplexity, ProjectMode } from '../../types/project'
+import { Sparkles } from 'lucide-react'
 
 const inputClass =
   'w-full rounded-md border border-edge bg-panel-2 px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none'
@@ -16,6 +17,7 @@ export function CreateProjectForm({ onDone }: { onDone?: () => void }) {
   const [mode, setMode] = useState<ProjectMode>('rebuild')
   const [complexity, setComplexity] = useState<ProjectComplexity>('small')
   const [stackText, setStackText] = useState('')
+  const [useAI, setUseAI] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -37,7 +39,20 @@ export function CreateProjectForm({ onDone }: { onDone?: () => void }) {
         stack,
       })
       onDone?.()
-      navigate(`/projects/${project.id}`)
+      if (useAI) {
+        // AI 生成课程：跳到课程生成页，携带项目规格
+        const params = new URLSearchParams({
+          title: title.trim(),
+          description: description.trim(),
+          mode,
+          complexity,
+          stack: stack.join(','),
+          projectId: project.id,
+        })
+        navigate(`/courses/new?${params.toString()}`)
+      } else {
+        navigate(`/projects/${project.id}`)
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '创建项目失败，请稍后重试。')
       setSubmitting(false)
@@ -122,6 +137,24 @@ export function CreateProjectForm({ onDone }: { onDone?: () => void }) {
           {error}
         </p>
       )}
+
+      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-accent/30 bg-accent-soft/50 px-3 py-2.5">
+        <input
+          type="checkbox"
+          checked={useAI}
+          onChange={(e) => setUseAI(e.target.checked)}
+          className="mt-0.5 size-4 accent-[var(--color-accent)]"
+        />
+        <span className="min-w-0">
+          <span className="flex items-center gap-1.5 text-xs font-medium text-ink">
+            <Sparkles className="size-3.5 text-accent" />
+            AI 自动生成课程（推荐）
+          </span>
+          <span className="mt-0.5 block text-[11px] leading-4 text-ink-faint">
+            根据你填写的项目描述，AI 自动分析技术栈、拆解任务、生成初始代码和测试，并在沙箱中验证课程可通关。取消勾选则使用内置模板。
+          </span>
+        </span>
+      </label>
 
       <div className="flex justify-end">
         <Button type="submit" disabled={!title.trim() || submitting}>

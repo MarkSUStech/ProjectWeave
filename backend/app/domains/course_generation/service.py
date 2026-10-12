@@ -93,6 +93,55 @@ def _get_adapter() -> GitHubAdapter:
 # ---------------------------------------------------------------- 创建/查询/操作
 
 
+def create_from_project_spec(
+    db: Session, project_spec: dict, owner_id: str = "dev-user",
+) -> CourseGeneration:
+    """从项目规格创建课程生成（P7.3：描述驱动，不依赖 GitHub URL）。"""
+    from app.domains.course_generation.sources.description_source import (
+        build_description_source,
+    )
+
+    snap = build_description_source(project_spec)
+    row = CourseGeneration(
+        owner_id=owner_id,
+        source_url=f"description:{project_spec.get('title', 'project')}",
+        status="pending",
+        repo_owner=snap.owner,
+        repo_name=snap.repo,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    threading.Thread(target=_run_pipeline_from_snapshot, args=(row.id, snap), daemon=True).start()
+    return row
+
+
+def _run_pipeline_from_snapshot(row_id, snap) -> None:
+    """从已有快照跑流水线（跳过 fetching 阶段）。"""
+    try:
+        adapter = _get_adapter()
+        snapshot_dict = {
+            "owner": snap.owner, "repo": snap.repo,
+            "defaultBranch": snap.default_branch, "commitSha": snap.commit_sha,
+            "meta": snap.meta, "tree": snap.tree, "files": snap.files,
+            "license": snap.license, "stats": snap.stats,
+        }
+        warnings = []
+        if snap.license.get("needs_review"):
+            warnings.append(snap.license.get("note") or "许可证需人工审查")
+        _set_stage(row_id, "fetching", status="fetching",
+                   repo_owner=snap.owner, repo_name=snap.repo,
+                   commit_sha=snap.commit_sha, default_branch=snap.default_branch,
+                   license_info=snap.license,
+                   repo_meta={"description": snap.meta.get("description"),
+                              "language": snap.meta.get("language"),
+                              "topics": snap.meta.get("topics")},
+                   snapshot=snapshot_dict, warnings=warnings)
+        _run_pipeline_rest(row_id)
+    except Exception as exc:
+        _fail(row_id, "fetching", f"描述驱动生成失败：{exc}")
+
+
 def create_generation(db: Session, payload: GenerationCreate, owner_id: str = "dev-user") -> CourseGeneration:
     # URL 语法先校验（失败即 422，不排队假任务）
     GitHubAdapter().fetch_snapshot  # noqa: B018（仅确保可导入）
@@ -242,6 +291,10 @@ def _run_pipeline_inner(row_id: uuid.UUID) -> None:
             return
         url = row.source_url
 
+    if url.startswith("description:"):
+        _run_pipeline_rest(row_id)
+        return
+
     # ---- fetching
     _set_stage(row_id, "fetching", status="fetching")
     adapter = _get_adapter()
@@ -260,6 +313,19 @@ def _run_pipeline_inner(row_id: uuid.UUID) -> None:
                           "language": snap.meta.get("language"),
                           "topics": snap.meta.get("topics")},
                snapshot=snapshot_dict, warnings=warnings)
+    _run_pipeline_rest(row_id)
+
+
+def _run_pipeline_rest(row_id: uuid.UUID) -> None:
+    """流水线 fetching 之后的阶段（快照已落库）。"""
+    with _session_factory() as db:
+        row = db.get(CourseGeneration, row_id)
+        if row is None:
+            return
+        snapshot_dict = row.snapshot or {}
+        if not snapshot_dict:
+            _fail(row_id, "fetching", "快照为空")
+            return
 
     # ---- analyzing（真实 LLM Agent；分析内容视为不可信数据——
     #      提示词已声明数据边界，见 repository_analyzer.ANALYSIS_SYSTEM_PROMPT）
@@ -277,8 +343,9 @@ def _run_pipeline_inner(row_id: uuid.UUID) -> None:
     source_files = sorted(snapshot_dict["files"].keys())
     blueprint_dict, _gen_tools = run_blueprint_generation(
         provider, {
-            "url": url, "owner": snap.owner, "repo": snap.repo,
-            "commitSha": snap.commit_sha, "license": snap.license,
+            "url": snapshot_dict.get("owner", "") + "/" + snapshot_dict.get("repo", ""),
+            "owner": snapshot_dict.get("owner"), "repo": snapshot_dict.get("repo"),
+            "commitSha": snapshot_dict.get("commitSha", ""), "license": snapshot_dict.get("license", {}),
         },
         analysis, known, source_files,
     )
@@ -288,7 +355,7 @@ def _run_pipeline_inner(row_id: uuid.UUID) -> None:
     _set_stage(row_id, "validating", status="validating", **row_fields)
     blueprint = CourseBlueprint.model_validate(blueprint_dict)
     result = validate_blueprint(blueprint, source_files, set(known),
-                                bool(snap.license.get("needs_review")))
+                                bool((snapshot_dict.get("license") or {}).get("needs_review")))
     _set_stage(row_id, "validating",
                blueprint=blueprint.model_dump(mode="json"),
                validation=result.model_dump(mode="json"))
@@ -302,7 +369,7 @@ def _run_pipeline_inner(row_id: uuid.UUID) -> None:
             )
             blueprint = CourseBlueprint.model_validate(blueprint_dict)
             result = validate_blueprint(blueprint, source_files, set(known),
-                                        bool(snap.license.get("needs_review")))
+                                        bool((snapshot_dict.get("license") or {}).get("needs_review")))
             _set_stage(row_id, "validating",
                        blueprint=blueprint.model_dump(mode="json"),
                        validation=result.model_dump(mode="json"),
@@ -315,6 +382,8 @@ def _run_pipeline_inner(row_id: uuid.UUID) -> None:
                "蓝图验证未通过（修复轮耗尽）：" +
                "; ".join(i.message for i in result.issues if i.severity == "error")[:400],
                repair_rounds=repairs)
+
+
 
 
 def _validate_row_blueprint(row: CourseGeneration) -> ValidationResult:

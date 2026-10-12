@@ -240,3 +240,23 @@ def get_final_report(project_id: str, db: Session = Depends(get_db)):
         return lc.final_verification_report(db, _parse_id(project_id))
     except lc.ReleaseError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+
+
+# ---------------------------------------------------------------- P7.3 描述驱动课程生成
+
+
+@router.post("/from-project", response_model=GenerationCreated, status_code=202)
+def generate_from_project(
+    payload: dict,
+    db: Session = Depends(get_db),
+) -> GenerationCreated:
+    """从项目规格（描述/栈/功能）生成课程——不依赖 GitHub。"""
+    from app.domains.course_generation import service as gen_service
+
+    try:
+        row = gen_service.create_from_project_spec(db, payload)
+    except gen_service.CourseGenerationError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from None
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"创建失败：{exc}") from None
+    return GenerationCreated(id=row.id, status=row.status, progress=row.progress)
