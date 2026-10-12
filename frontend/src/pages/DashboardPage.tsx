@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { listProjects } from '../api/projects'
+import { deleteProject, listProjects } from '../api/projects'
 import { ApiError } from '../api/client'
 import type { Project } from '../types/project'
 import { Badge } from '../components/ui/Badge'
@@ -18,7 +18,7 @@ import {
 import { BlurFade } from '../components/ui/upstream/blur-fade'
 import { AnimatePresence, motion } from 'motion/react'
 import { useUiReducedMotion } from '../hooks/useUiReducedMotion'
-import { FolderCode, ArrowUpRight, Plus, Network, ArrowRight, Code2, Route, ScanLine } from 'lucide-react'
+import { FolderCode, ArrowUpRight, Plus, Network, ArrowRight, Code2, Route, ScanLine, Trash2 } from 'lucide-react'
 
 function statusTone(status: Project['status']) {
   switch (status) {
@@ -33,12 +33,30 @@ function statusTone(status: Project['status']) {
   }
 }
 
-function ProjectCard({ project }: { project: Project }) {
+interface ProjectCardProps {
+  project: Project
+  onDelete?: (project: Project) => void
+}
+
+function ProjectCard({ project, onDelete }: ProjectCardProps) {
   return (
     <article className="project-surface group rounded-xl border border-edge-soft bg-panel p-6 transition-colors hover:border-edge lg:p-7">
       <div className="mb-7 flex items-center justify-between">
         <FolderCode className="size-7 text-accent" strokeWidth={1.5} />
-        <Badge tone={statusTone(project.status)}><span className="mr-1.5 size-1 rounded-full bg-current" />{STATUS_LABELS[project.status]}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge tone={statusTone(project.status)}><span className="mr-1.5 size-1 rounded-full bg-current" />{STATUS_LABELS[project.status]}</Badge>
+          {onDelete && (
+            <button
+              type="button"
+              title="删除项目"
+              aria-label={`删除项目 ${project.title}`}
+              onClick={() => onDelete(project)}
+              className="rounded-md p-1.5 text-ink-faint opacity-0 transition-opacity hover:bg-danger/10 hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              <Trash2 className="size-4" />
+            </button>
+          )}
+        </div>
       </div>
       <h2 className="mb-3 text-xl font-semibold tracking-tight"><Link to={`/projects/${project.id}`} className="hover:text-accent">{project.title}</Link></h2>
       {project.description && (
@@ -71,6 +89,8 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<Project | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     setError(null)
@@ -84,6 +104,20 @@ export default function DashboardPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  const handleDelete = useCallback(async () => {
+    if (!confirmDelete) return
+    setDeleting(true)
+    try {
+      await deleteProject(confirmDelete.id)
+      setConfirmDelete(null)
+      await load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '删除失败')
+    } finally {
+      setDeleting(false)
+    }
+  }, [confirmDelete, load])
 
   return (
     <div className="mx-auto min-h-full max-w-[1180px] px-6 py-10 lg:px-10 lg:py-12">
@@ -124,7 +158,7 @@ export default function DashboardPage() {
         {!error && projects !== null && projects.length > 0 && (
           <div className="space-y-4">
             {projects.map((project) => (
-              <BlurFade key={project.id} delay={0.035} duration={0.25} offset={3} blur="2px"><ProjectCard project={project} /></BlurFade>
+              <BlurFade key={project.id} delay={0.035} duration={0.25} offset={3} blur="2px"><ProjectCard project={project} onDelete={setConfirmDelete} /></BlurFade>
             ))}
           </div>
         )}
@@ -147,6 +181,48 @@ export default function DashboardPage() {
         <span>代码编辑、浏览器运行与测试、能力诊断、学习路线已接入真实数据。</span>
         <Link to="/concepts" className="inline-flex items-center gap-1 text-ink-dim hover:text-ink">探索知识依赖<ArrowUpRight className="size-3" /></Link>
       </footer>
+
+      {/* 删除确认对话框 */}
+      <AnimatePresence initial={false}>
+        {confirmDelete && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduced ? 0 : 0.15 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => !deleting && setConfirmDelete(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-label="删除项目确认"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ duration: reduced ? 0 : 0.15 }}
+              className="max-w-md rounded-xl border border-edge-soft bg-panel p-6 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="mb-2 text-base font-semibold text-ink">删除项目</h3>
+              <p className="mb-1 text-sm leading-6 text-ink-dim">
+                确定要删除「{confirmDelete.title}」吗？
+              </p>
+              <p className="mb-5 text-xs leading-5 text-ink-faint">
+                将级联删除该项目的全部文件、代码快照、任务、学习计划、教学记录与学习事件，操作不可撤销。
+              </p>
+              <div className="flex justify-end gap-3">
+                <Button size="sm" variant="ghost" disabled={deleting} onClick={() => setConfirmDelete(null)}>
+                  取消
+                </Button>
+                <Button size="sm" variant="danger" disabled={deleting} onClick={() => void handleDelete()}>
+                  {deleting ? '删除中…' : '确认删除'}
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

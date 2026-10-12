@@ -23,3 +23,8 @@ export async function createProject(input: ProjectCreateInput): Promise<Project>
   const data = await api.post<unknown>('/projects', input)
   return projectReadSchema.parse(data)
 }
+
+/** 删除项目（后端级联删除文件/任务/计划/事件，204）。 */
+export async function deleteProject(id: string): Promise<void> {
+  await api.delete<unknown>(`/projects/${id}`)
+}
