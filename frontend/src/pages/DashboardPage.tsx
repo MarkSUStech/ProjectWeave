@@ -18,7 +18,7 @@ import {
 import { BlurFade } from '../components/ui/upstream/blur-fade'
 import { AnimatePresence, motion } from 'motion/react'
 import { useUiReducedMotion } from '../hooks/useUiReducedMotion'
-import { FolderCode, ArrowUpRight, Plus, Network, ArrowRight, Code2, Route, ScanLine, Trash2 } from 'lucide-react'
+import { FolderCode, ArrowUpRight, Plus, Network, ArrowRight, Code2, Route, ScanLine, Trash2, GitBranch, Sparkles } from 'lucide-react'
 
 function statusTone(status: Project['status']) {
   switch (status) {
@@ -127,6 +127,9 @@ export default function DashboardPage() {
           <p className="mt-3 text-[15px] leading-7 text-ink-dim">从想法到运行，在真实项目中理解代码。</p>
         </div>
         <div className="flex items-center gap-3">
+          <Button asChild className="h-10 px-4" variant="outline">
+            <Link to="/courses/new"><GitBranch className="size-4" />从 GitHub 生成课程</Link>
+          </Button>
           <Button className="h-10 px-4" onClick={() => setCreating((value) => !value)} variant={creating ? 'outline' : 'primary'}>
             <Plus className="size-4" />{creating ? '收起表单' : '新建项目'}
           </Button>
@@ -146,14 +149,31 @@ export default function DashboardPage() {
         {error && <ErrorBanner message={error} onRetry={() => void load()} />}
         {!error && projects === null && <Spinner label="正在加载项目列表…" />}
         {!error && projects !== null && projects.length === 0 && (
-          <EmptyState
-            title="还没有项目"
-            description="从描述一个你真正想完成的软件项目开始。创建后可以诊断能力、生成学习路线并进入教学 IDE。"
-          >
-            <Button size="sm" variant="outline" onClick={() => setCreating(true)} className="mt-3">
-              创建第一个项目
-            </Button>
-          </EmptyState>
+          <div className="space-y-4">
+            <EmptyState
+              title="还没有项目"
+              description="两种方式开始学习：手动创建项目，或让 AI 从 GitHub 仓库自动生成完整课程。"
+            >
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button asChild size="sm">
+                  <Link to="/courses/new"><GitBranch className="size-4" />从 GitHub 生成课程</Link>
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+                  <Plus className="size-4" />手动创建项目
+                </Button>
+              </div>
+            </EmptyState>
+            <Link to="/courses/new" className="group block rounded-xl border border-edge-soft bg-panel p-5 transition-colors hover:border-accent/40">
+              <div className="flex items-start gap-4">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent"><Sparkles className="size-5" /></span>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-ink group-hover:text-accent">AI 自动生成项目课程</p>
+                  <p className="mt-1 text-xs leading-5 text-ink-faint">输入一个 GitHub 仓库地址，AI 自动分析代码、拆解任务、生成测试并验证——然后你从零开始逐阶段实现这个项目。</p>
+                </div>
+                <ArrowRight className="ml-auto mt-1 size-4 shrink-0 text-ink-faint group-hover:text-accent" />
+              </div>
+            </Link>
+          </div>
         )}
         {!error && projects !== null && projects.length > 0 && (
           <div className="space-y-4">
@@ -174,6 +194,7 @@ export default function DashboardPage() {
               <Link key={title} to={to} className="group flex items-start gap-3 rounded-lg py-3 text-ink-dim hover:text-ink"><Icon className="mt-0.5 size-4 shrink-0 text-ink-faint group-hover:text-accent" /><span><span className="block text-[13px] font-medium">{title}</span><span className="mt-1 block text-xs text-ink-faint">{description}</span></span><ArrowRight className="ml-auto mt-0.5 size-3.5 text-ink-faint" /></Link>)}
         </div>}
         <Link to="/concepts" className="mt-6 flex items-center gap-2 border-t border-edge-soft pt-5 text-xs text-accent hover:text-ink"><Network className="size-4" />探索知识之间的联系<ArrowUpRight className="ml-auto size-3.5" /></Link>
+        <Link to="/courses/new" className="mt-2 flex items-center gap-2 text-xs text-accent hover:text-ink"><Sparkles className="size-4" />从 GitHub 生成课程<ArrowUpRight className="ml-auto size-3.5" /></Link>
       </aside>
       </div>
 
