@@ -23,12 +23,19 @@ from app.domains.course_generation.lessons.schemas import LessonArtifact
 from app.domains.course_generation.models import CourseGeneration, CourseRelease
 from app.domains.course_generation.validation.blueprint_validator import _has_cycle
 from app.domains.course_generation.verification.course_verifier import (
+    SANDBOX_VERIFIED_LANGUAGES,
     guard_starter,
     merge_files,
     run_in_sandbox,
 )
 
 MAX_REPAIR_PER_TASK = 3
+
+
+def unsupported_language_message(language: str) -> str:
+    """无真实沙箱验证器的语言：如实拒绝（不烧 LLM、不伪装成功）。"""
+    return (f"暂不支持 {language} 课程的沙箱验证（当前仅支持 Python：真实 Docker + pytest 全链验证）。"
+            "为不伪造成功，已拒绝生成课程内容；蓝图已保留，待该语言验证器上线后可重试。")
 
 
 class ReleaseError(Exception):
@@ -81,6 +88,10 @@ def build_lessons(db: Session, generation_id) -> CourseRelease:
         raise ReleaseError("生成任务不存在", 404)
     if gen.blueprint is None or gen.status not in ("published", "draft"):
         raise ReleaseError("蓝图未就绪（需先完成蓝图生成与验证）")
+    language = lesson_builder.detect_language(gen.blueprint)
+    if language not in SANDBOX_VERIFIED_LANGUAGES:
+        # 提前拒绝：不做任何 LLM 生成/修复尝试，不产生注定失败的 release
+        raise ReleaseError(unsupported_language_message(language), 422)
     version = 1 + len(list(db.scalars(
         select(CourseRelease.id).where(CourseRelease.generation_id == gen.id)
     )))
@@ -88,7 +99,7 @@ def build_lessons(db: Session, generation_id) -> CourseRelease:
         generation_id=gen.id,
         release_version=version,
         status="generating",
-        language=lesson_builder.detect_language(gen.blueprint),
+        language=language,
         course_title=(gen.blueprint.get("project") or {}).get("title", ""),
         blueprint_snapshot=gen.blueprint,
     )
@@ -268,6 +279,27 @@ def _artifact_public(artifact: LessonArtifact) -> dict:
     return data
 
 
+def _material_context(material: dict, limit: int = 4600) -> str:
+    """修复轮上下文：文件路径清单 + 常见修复对象（starter/test）的头部摘要。"""
+    def inv(kind: str) -> str:
+        return ", ".join(
+            f"{f.get('path')}({len((f.get('content') or '').splitlines())}行)"
+            for f in material.get(kind) or []) or "（无）"
+
+    parts = [
+        f"starterFiles: {inv('starterFiles')}",
+        f"testFiles: {inv('testFiles')}",
+        f"referenceFiles: {inv('referenceFiles')}",
+    ]
+    for kind in ("starterFiles", "testFiles"):
+        for f in (material.get(kind) or [])[:4]:
+            head = "\n".join((f.get("content") or "").splitlines()[:12])
+            parts.append(f"--- {f.get('path')} 头12行 ---\n{head}")
+        if len("\n".join(parts)) > limit:
+            break
+    return "\n".join(parts)[:limit]
+
+
 def _prior_failures(db: Session, generation_id, before_version: int) -> dict[str, list[str]]:
     """收集同一 generation 此前失败 release 的逐任务问题（喂给重试生成的 LLM）。
 
@@ -307,6 +339,11 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
             return
         blueprint = _normalize_blueprint(release.blueprint_snapshot or {})
         language = release.language
+        if language not in SANDBOX_VERIFIED_LANGUAGES:
+            # 防御：历史 release 行/竞态兜底（build_lessons 已提前拒绝新请求）
+            _update(release_id, status="failed", progress=100,
+                    error=unsupported_language_message(language))
+            return
         gen = db.get(CourseGeneration, release.generation_id)
         snapshot_files = (gen.snapshot or {}).get("files", {}) if gen else {}
         # 重试上下文：此前失败 release 的逐任务问题（喂给本轮 LLM 规避）
@@ -363,13 +400,18 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
                 material.get("starterFiles") or [],
                 material.get("referenceFiles") or [],
                 material.get("testFiles") or [],
+                language,
             )
             if problems:
                 error_msg = "防伪守卫：" + "; ".join(problems[:3])
                 if attempt < MAX_REPAIR_PER_TASK:
                     material = lesson_builder.repair_task_lesson(
                         provider, material,
-                        [{"kind": "guard", "message": p} for p in problems], language)
+                        [{"kind": "guard", "message": p} for p in problems]
+                        + [{"kind": "material-context", "message":
+                            "当前生成的文件清单与摘要（修复必须针对这些文件）：\n"
+                            + _material_context(material)}],
+                        language)
                     repairs.append({"round": attempt + 1, "problem": error_msg,
                                     "changedFiles": [], "outcome": "still-failing"})
                     continue

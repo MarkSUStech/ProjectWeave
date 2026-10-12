@@ -122,6 +122,131 @@ def test_guard_catches_violations(violation, fragment):
     assert any(fragment in p for p in problems), problems
 
 
+# ---------------------------------------------------------------- 语言化守卫（Python 结构化 / C++ / TS）
+
+
+def test_guard_python_structured():
+    """AST 结构化：语法错误/空转测试带文件与函数名；空壳函数也算有效待实现。"""
+    m = _material()
+    bad = {"path": "tests/test_bad.py", "content": "def test_x(:" + NL + "    pass" + NL}
+    problems = guard_starter(m["starterFiles"], m["referenceFiles"], [bad])
+    assert any("语法错误" in p and "tests/test_bad.py" in p for p in problems), problems
+
+    vacuous = {"path": "tests/test_v.py", "content": "def test_nothing():" + NL + "    x = 1" + NL}
+    problems = guard_starter(m["starterFiles"], m["referenceFiles"], [vacuous])
+    assert any("test_nothing" in p and "空转" in p for p in problems), problems
+
+    # 无 TODO 标记但有空壳函数（raise NotImplementedError）→ 有效待实现区域
+    stub = {"path": "micrograd/value.py",
+            "content": "class Value:" + NL + "    def __init__(self, d):" + NL
+                       + "        self.data = d" + NL + "    def backward(self):" + NL
+                       + "        raise NotImplementedError" + NL}
+    problems = guard_starter([stub], m["referenceFiles"], m["testFiles"])
+    assert not any("TODO" in p for p in problems), problems
+
+    # 裸 TODO（无描述）不算有效标记
+    bare = {"path": "micrograd/value.py",
+            "content": "class Value:" + NL + "    # TODO" + NL + "    pass" + NL}
+    problems = guard_starter([bare], m["referenceFiles"], m["testFiles"])
+    assert any("TODO" in p for p in problems), problems
+
+
+def _cpp_material() -> dict:
+    """C++ 课程材料（与线上失败样本同构）：TODO 在 CMakeLists/源码，测试为可执行程序。"""
+    return {
+        "starterFiles": [
+            {"path": "CMakeLists.txt",
+             "content": ("cmake_minimum_required(VERSION 3.16)" + NL
+                         + "project(weave LANGUAGES CXX)" + NL + NL
+                         + "# TODO: 设置 C++17 标准（CMAKE_CXX_STANDARD）" + NL
+                         + "# TODO: 声明 weave_core 静态库目标" + NL)},
+            {"path": "include/weave/version.h",
+             "content": "#pragma once" + NL + "#include <string>" + NL
+                        + "namespace weave {" + NL + "std::string version();" + NL + "}" + NL},
+            {"path": "src/core/version.cpp",
+             "content": ("#include \"weave/version.h\"" + NL + "namespace weave {" + NL
+                         + "// TODO: 返回 \"0.1.0\"" + NL
+                         + "std::string version() { return \"\"; }" + NL + "}" + NL)},
+        ],
+        "referenceFiles": [
+            {"path": "src/core/version.cpp",
+             "content": ("#include \"weave/version.h\"" + NL + "namespace weave {" + NL
+                         + "std::string version() { return \"0.1.0\"; }" + NL + "}" + NL)},
+            {"path": "include/weave/version.h",
+             "content": "#pragma once" + NL + "#include <string>" + NL
+                        + "namespace weave {" + NL + "std::string version();" + NL + "}" + NL},
+            {"path": "CMakeLists.txt",
+             "content": "cmake_minimum_required(VERSION 3.16)" + NL + ("# pad" + NL) * 40},
+        ],
+        "testFiles": [
+            {"path": "tests/test_engine.cpp",
+             "content": ("#include <cassert>" + NL + "#include <string>" + NL
+                         + "#include \"weave/version.h\"" + NL + "int main() {" + NL
+                         + "  const std::string v = weave::version();" + NL
+                         + "  assert(!v.empty());" + NL + "  return 0;" + NL + "}" + NL)},
+        ],
+    }
+
+
+def test_guard_cpp_material_from_real_failure():
+    """回归（线上 v3/v4 失败样本）：C++ 材料不得再被 Python-only 规则误拒。"""
+    m = _cpp_material()
+    assert guard_starter(m["starterFiles"], m["referenceFiles"], m["testFiles"], "cpp") == []
+
+
+def test_guard_cpp_violations():
+    m = _cpp_material()
+    # 全部 TODO 变裸标记（无描述）→ 拒绝
+    import re as _re
+
+    for f in m["starterFiles"]:
+        f["content"] = _re.sub(r"TODO[:：][^\n]*", "TODO", f["content"])
+    problems = guard_starter(m["starterFiles"], m["referenceFiles"], m["testFiles"], "cpp")
+    assert any("TODO" in p for p in problems), problems
+
+    m2 = _cpp_material()
+    m2["testFiles"][0]["content"] = m2["testFiles"][0]["content"].replace(
+        "assert(!v.empty());", "")
+    problems = guard_starter(m2["starterFiles"], m2["referenceFiles"], m2["testFiles"], "cpp")
+    assert any("断言" in p for p in problems), problems
+
+    m3 = _cpp_material()
+    m3["testFiles"][0]["content"] = m3["testFiles"][0]["content"].replace("int main() {", "int run() {")
+    problems = guard_starter(m3["starterFiles"], m3["referenceFiles"], m3["testFiles"], "cpp")
+    assert any("main" in p for p in problems), problems
+
+
+def test_guard_typescript_rules():
+    m = {
+        "starterFiles": [{"path": "src/stack.ts",
+                          "content": "export class Stack {" + NL + "  // TODO: push 压栈" + NL + "}" + NL}],
+        "referenceFiles": [{"path": "src/stack.ts",
+                            "content": ("export class Stack {" + NL
+                                        + "  private items: number[] = [];" + NL
+                                        + "  push(x: number) { this.items.push(x); }" + NL
+                                        + "}" + NL) * 3}],
+        "testFiles": [{"path": "tests/stack.test.ts",
+                       "content": ("import { describe, it, expect } from 'vitest'" + NL
+                                   + "describe('Stack', () => {" + NL
+                                   + "  it('pushes', () => { expect(new Stack()).toBeTruthy() })" + NL
+                                   + "})" + NL)}],
+    }
+    assert guard_starter(m["starterFiles"], m["referenceFiles"], m["testFiles"], "typescript") == []
+
+    m["testFiles"][0]["content"] = "import { describe } from 'vitest'" + NL + "describe('x', () => {})" + NL
+    problems = guard_starter(m["starterFiles"], m["referenceFiles"], m["testFiles"], "typescript")
+    assert any("it/test" in p for p in problems), problems
+    assert any("expect" in p for p in problems), problems
+
+
+def test_guard_unknown_language():
+    problems = guard_starter([{"path": "a.py", "content": "# TODO: x"}],
+                             [{"path": "a.py", "content": "x = 1"}],
+                             [{"path": "t.py", "content": "def test_a():\n    assert True\n"}],
+                             "rust")
+    assert any("未知课程语言" in p for p in problems), problems
+
+
 def test_merge_files_cumulative():
     merged = merge_files({"a.py": "1", "b.py": "2"}, {"b.py": "3", "c.py": "4"})
     assert merged == {"a.py": "1", "b.py": "3", "c.py": "4"}
@@ -417,3 +542,36 @@ def test_prior_failures_unit(db_session):
     assert set(result) == {"t2", "t3"}
     assert any("断言" in p for p in result["t2"])
     assert result["t3"] == ["任务 t3 验证失败：服务重启中断"]
+
+
+def test_build_lessons_rejects_unsupported_language(client: TestClient, build_env, db_session):
+    """cpp 课程：提前 422 拒绝——不创建 release、不消耗 LLM 调用、明确报告限制。"""
+    import uuid as _uuid
+
+    from app.domains.course_generation.models import CourseGeneration, CourseRelease
+
+    gen_id = _seed_published_generation(client, db_session)
+    row = db_session.get(CourseGeneration, _uuid.UUID(gen_id))
+    bp = dict(row.blueprint or {})
+    project = dict(bp.get("project") or {})
+    project["tech_stack"] = ["C++"]   # detect_language 读取 snake 键
+    project["techStack"] = ["C++"]
+    bp["project"] = project
+    row.blueprint = bp
+    db_session.commit()
+
+    calls: list[str] = []
+    provider = build_env[1]
+    original_chat = provider.chat
+
+    def counting_chat(system, user):
+        calls.append(user)
+        return original_chat(system, user)
+
+    provider.chat = counting_chat
+
+    resp = client.post(f"/api/v1/course-generations/{gen_id}/build-lessons")
+    assert resp.status_code == 422, resp.text
+    assert "暂不支持 cpp" in resp.json()["detail"]
+    assert db_session.query(CourseRelease).count() == 0   # 无 release 行
+    assert calls == []                                     # 零 LLM 调用

@@ -18,8 +18,8 @@ import {
   TERMINAL_STATUSES,
   type CourseBlueprint,
   type CourseGeneration,
-  type CourseRelease,
   type RepositoryAnalysis,
+  type ReleaseDetail,
   type TaskSpec,
   type ValidationInfo,
 } from '../api/courseGeneration'
@@ -52,7 +52,7 @@ export default function CourseGeneratePage() {
   const [validation, setValidation] = useState<ValidationInfo | null>(null)
   const [selectedTask, setSelectedTask] = useState<TaskSpec | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [release, setRelease] = useState<CourseRelease | null>(null)
+  const [release, setRelease] = useState<ReleaseDetail | null>(null)
   const [busy, setBusy] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -138,7 +138,8 @@ export default function CourseGeneratePage() {
     if (!gen) return
     setBusy(true)
     try {
-      setRelease(await buildLessons(gen.id))
+      // buildLessons 返回摘要（无 artifacts）；轮询 getRelease 会带回详情
+      setRelease({ ...(await buildLessons(gen.id)), artifacts: [] })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err))
     } finally {
@@ -450,6 +451,27 @@ export default function CourseGeneratePage() {
           {release.status === 'failed' && release.error && (
             <p role="alert" className="rounded border border-danger/40 bg-danger/10 px-2.5 py-2 text-xs text-danger">{release.error}</p>
           )}
+          {release.status === 'failed' && (() => {
+            const rounds = release.artifacts
+              .filter(a => a.status === 'failed')
+              .flatMap(a => (a.repairs ?? []).map(r => ({ task: a.taskId, ...r })))
+            if (rounds.length === 0) return null
+            return (
+              <details className="mb-3 rounded border border-edge-soft bg-panel px-2.5 py-2 text-xs">
+                <summary className="cursor-pointer text-ink-dim">
+                  修复尝试记录（{rounds.length} 轮，全部未通过）
+                </summary>
+                <ul className="mt-2 space-y-1.5">
+                  {rounds.slice(-8).reverse().map((r, i) => (
+                    <li key={i} className="text-ink-faint">
+                      <span className="text-danger">[{r.task} · 第 {r.round} 轮未通过]</span>{' '}
+                      {r.problem}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )
+          })()}
           {release.status === 'failed' && (
             <div className="flex items-center gap-3">
               <Button size="sm" disabled={busy} onClick={() => void startBuildLessons()}>

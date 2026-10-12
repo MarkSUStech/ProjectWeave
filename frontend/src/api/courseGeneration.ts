@@ -225,9 +225,10 @@ export const artifactSchema = z.object({
   verifications: z.array(z.object({
     kind: z.string(), status: z.string(),
     exitCode: z.number().int().nullable().default(null),
-    total: z.number().int().default(0), passed: z.number().int().default(0),
-    failed: z.number().int().default(0),
+    totalTests: z.number().int().default(0), passedTests: z.number().int().default(0),
+    failedTests: z.number().int().default(0),
     diagnostics: z.array(z.record(z.string(), z.unknown())).default([]),
+    stdoutTail: z.string().default(''),
     stderrTail: z.string().default(''),
     durationMs: z.number().int().default(0),
   })).default([]),

@@ -576,3 +576,36 @@
       的生成提示词（系统提示同步声明），LLM 针对性规避上次失败原因
 - [x] 验证：后端 **284 全过**（+2：重试提示携带失败原因 / _prior_failures
       单元）；前端 **275 全过**（+1：失败卡片重试按钮触发 v2）
+
+### P7.2 修复：防伪守卫语言化 + 不支持语言如实拒绝（D42 增补 2）
+
+**根因**：C++ 课程（线上 v3/v4）被 Python-only 守卫误拒——TODO 检查只读
+`.py`、测试检查只认 `def test_`，而 C++ 材料的 TODO 在 CMakeLists.txt、
+测试为 assert 可执行程序（完全符合课程自身 ENV 约定）；3 轮修复 ×
+多版本全部撞死在同一误报上。且 `run_in_sandbox` 非 Python 返回 skipped，
+流水线也无前置语言闸门——C++/TS 课程注定失败却反复烧 LLM。
+
+- [x] **guard_starter 语言化**（`language` 参数）：TODO 检查按语言读正确
+      文件（cpp 含 CMakeLists/.cmake；ts 读 .ts/.tsx）；裸 `TODO` 无描述
+      不算有效标记；泄露判定语言化
+- [x] **Python 结构化校验（AST）**：测试文件必须可解析（pytest 可收集）、
+      `test_` 函数非空转（无 assert/raises/approx → 报函数名）、
+      `assert True` 恒真断言拒绝；starter 无 TODO 但有空壳函数
+      （pass/.../raise NotImplementedError）也算有效待实现区域
+- [x] **C++/TS 守卫规则**：cpp 要求测试为含 main 的可执行程序 + 真实
+      断言（assert/EXPECT_*/ASSERT_*）；ts 要求 it/test 用例 + expect 断言
+- [x] **不支持语言提前拒绝**：`SANDBOX_VERIFIED_LANGUAGES=("python",)`；
+      build_lessons 对 cpp/ts 直接 422（不创建 release、零 LLM 调用），
+      `_run_build_inner` 对历史行防御性标 failed；错误信息如实说明限制
+- [x] **修复轮反馈增强**：守卫拒绝时附带文件清单（路径+行数）与
+      starter/test 头 12 行摘要；REPAIR_SYSTEM_PROMPT 明确禁止删测试/
+      恒真断言/补全 starter/移除 TODO 等伪造成功手段
+- [x] **契约修复**：`VerifyOutcome.to_dict()` 键对齐 SandboxVerification
+      （total_tests 等；此前 total/passed/failed 被 schema 静默丢弃）
+- [x] **前端**：失败卡片新增「修复尝试记录」折叠列表（逐轮实际原因）；
+      artifactSchema verifications 字段名对齐后端契约
+- [x] 验证：后端 **290 全过**（+6：py 结构化/线上 C++ 样本回归/cpp 三类
+      违规/ts 规则/未知语言/unsupported 422 零 LLM）；前端 **275 全过**；
+      **真实 Docker E2E**（PW_SANDBOX_E2E=1，新 test_lesson_docker_e2e.py）：
+      micrograd 9 任务全链真沙箱 ready——参考实现真跑 pytest（totalTests>0）、
+      starter 期望失败（failedTests>0）、最终集成、实例化全部通过

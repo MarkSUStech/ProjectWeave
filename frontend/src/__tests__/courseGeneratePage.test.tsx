@@ -132,6 +132,14 @@ describe('CourseGeneratePage', () => {
       error: status === 'failed' ? '任务 task-4-1 验证失败：防伪守卫：starter 缺少 TODO 标记' : null,
       courseTitle: '从零实现自动微分引擎', readyAt: null,
       createdAt: '2026-10-11T00:00:00Z',
+      artifacts: status === 'failed' ? [{
+        taskId: 'task-4-1', milestoneId: 'ms-4', language: 'python',
+        instructions: { title: '实现反向传播' },
+        starterFiles: [], testFiles: [], hints: [], status: 'failed',
+        verifications: [],
+        repairs: [{ round: 1, problem: '防伪守卫：starter 缺少有效 TODO 标记', changedFiles: [], outcome: 'still-failing' }],
+        error: '防伪守卫：starter 缺少有效 TODO 标记',
+      }] : [],
     })
     let builds = 0
     fetchImpl = async (url, init) => {
@@ -140,7 +148,11 @@ describe('CourseGeneratePage', () => {
       }
       if (url.endsWith('/build-lessons') && init?.method === 'POST') {
         builds += 1
-        return jsonResponse(releaseBody(builds, builds >= 2 ? 'generating' : 'failed'), 202)
+        // 真实时序：POST 返回 generating 摘要（无 artifacts），轮询 GET 拿失败详情
+        return jsonResponse(releaseBody(builds, 'generating'), 202)
+      }
+      if (url.includes('/course-releases/')) {
+        return jsonResponse(releaseBody(1, 'failed'))
       }
       if (url.includes(`/course-generations/${UUID}/analysis`)) {
         return jsonResponse({ status: 'published', analysis: null, toolCalls: [] })
@@ -161,12 +173,14 @@ describe('CourseGeneratePage', () => {
     await waitFor(() => expect(screen.getByText('生成课程内容并验证')).toBeTruthy(), { timeout: 3000 })
     fireEvent.click(screen.getByText('生成课程内容并验证'))
 
-    // v1 失败卡片：错误横幅 + 重试按钮
-    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy(), { timeout: 3000 })
+    // 轮询拿到失败详情：错误横幅 + 每轮修复实际原因 + 重试按钮
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy(), { timeout: 8000 })
+    expect(screen.getByText(/修复尝试记录/)).toBeTruthy()
+    expect(screen.getByText(/防伪守卫：starter 缺少有效 TODO 标记/)).toBeTruthy()
     expect(screen.getByText(/重新生成课程内容（v2）/)).toBeTruthy()
     expect(screen.getByText(/上次失败的具体原因会反馈给本次生成/)).toBeTruthy()
 
     fireEvent.click(screen.getByText(/重新生成课程内容（v2）/))
     await waitFor(() => expect(builds).toBe(2), { timeout: 3000 })
-  })
+  }, 20000)
 })
