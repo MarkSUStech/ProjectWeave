@@ -220,8 +220,8 @@ export default function CourseGeneratePage() {
         <section className="mb-6 rounded-lg border border-edge-soft bg-panel-2 p-4">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-sm font-medium text-ink">
-              {gen.repo_owner}/{gen.repo_name}
-              {gen.commit_sha && <span className="ml-2 font-mono text-[10px] text-ink-faint">@{gen.commit_sha.slice(0, 10)}</span>}
+              {gen.repoOwner}/{gen.repoName}
+              {gen.commitSha && <span className="ml-2 font-mono text-[10px] text-ink-faint">@{gen.commitSha.slice(0, 10)}</span>}
             </span>
             <Badge tone={gen.status === 'failed' ? 'danger' : gen.status === 'draft' || gen.status === 'published' ? 'ok' : 'info'}>
               {STAGE_LABELS[gen.stage ?? gen.status] ?? gen.status}
@@ -253,7 +253,7 @@ export default function CourseGeneratePage() {
           <h2 className="mb-2 text-sm font-medium text-ink">仓库分析（真实工具调用）</h2>
           <p className="mb-3 text-xs leading-relaxed text-ink-dim">{analysis.summary}</p>
           <div className="mb-3 flex flex-wrap gap-1">
-            {analysis.tech_stack.map((t) => <Badge key={t}>{t}</Badge>)}
+            {analysis.techStack.map((t) => <Badge key={t}>{t}</Badge>)}
           </div>
           {toolCalls.length > 0 && (
             <details className="mb-3">
@@ -300,8 +300,8 @@ export default function CourseGeneratePage() {
           </div>
           <p className="mb-3 text-xs leading-relaxed text-ink-dim">{blueprint.project.description}</p>
           <div className="mb-3 grid gap-1 text-[11px] text-ink-faint sm:grid-cols-2">
-            <div>最终成品：{blueprint.project.final_artifact || '—'}</div>
-            <div>难度：{blueprint.project.difficulty} · 面向：{blueprint.project.target_level}</div>
+            <div>最终成品：{blueprint.project.finalArtifact || '—'}</div>
+            <div>难度：{blueprint.project.difficulty} · 面向：{blueprint.project.targetLevel}</div>
           </div>
 
           {/* 验证问题 */}
@@ -327,11 +327,11 @@ export default function CourseGeneratePage() {
               <li key={ms.milestoneId} className="rounded border border-edge-soft/70 px-3 py-2">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-xs font-medium text-ink">M{i + 1} · {ms.title}</span>
-                  <span className="shrink-0 text-[10px] text-ink-faint">{ms.estimated_effort_band}</span>
+                  <span className="shrink-0 text-[10px] text-ink-faint">{ms.estimatedEffortBand}</span>
                 </div>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-ink-dim">{ms.description}</p>
                 <div className="mt-1 text-[10px] text-ink-faint">
-                  交付：{ms.deliverables.join('、')} · 验收：{ms.acceptance_criteria[0] ?? '—'}
+                  交付：{ms.deliverables.join('、')} · 验收：{ms.acceptanceCriteria[0] ?? '—'}
                 </div>
               </li>
             ))}
@@ -351,10 +351,10 @@ export default function CourseGeneratePage() {
                 >
                   <span className="font-mono text-[10px] text-ink-faint">{task.taskId}</span>{' '}
                   {task.title}
-                  {task.depends_on.length > 0 && (
-                    <span className="ml-2 font-mono text-[9px] text-ink-faint">← {task.depends_on.join(', ')}</span>
+                  {task.dependsOn.length > 0 && (
+                    <span className="ml-2 font-mono text-[9px] text-ink-faint">← {task.dependsOn.join(', ')}</span>
                   )}
-                  {task.source_evidence.length === 0 && <span className="ml-1 text-[9px] text-warn">（无证据）</span>}
+                  {task.sourceEvidence.length === 0 && <span className="ml-1 text-[9px] text-warn">（无证据）</span>}
                 </button>
               </li>
             ))}
@@ -366,17 +366,17 @@ export default function CourseGeneratePage() {
               <div className="mb-1 font-medium text-ink">{selectedTask.title}</div>
               <p className="mb-2 text-ink-dim">{selectedTask.description}</p>
               <ul className="mb-2 space-y-0.5 text-[11px] text-ink-dim">
-                {selectedTask.learning_objectives.length > 0 && <li>学习目标：{selectedTask.learning_objectives.join('；')}</li>}
+                {selectedTask.learningObjectives.length > 0 && <li>学习目标：{selectedTask.learningObjectives.join('；')}</li>}
                 {selectedTask.deliverables.length > 0 && <li>交付：{selectedTask.deliverables.join('；')}</li>}
-                {selectedTask.acceptance_criteria.length > 0 && <li>验收：{selectedTask.acceptance_criteria.join('；')}</li>}
-                {selectedTask.test_strategy && <li>测试策略：{selectedTask.test_strategy}</li>}
-                {selectedTask.required_concepts.length > 0 && <li>知识：{selectedTask.required_concepts.join('、')}</li>}
+                {selectedTask.acceptanceCriteria.length > 0 && <li>验收：{selectedTask.acceptanceCriteria.join('；')}</li>}
+                {selectedTask.testStrategy && <li>测试策略：{selectedTask.testStrategy}</li>}
+                {selectedTask.requiredConcepts.length > 0 && <li>知识：{selectedTask.requiredConcepts.join('、')}</li>}
               </ul>
-              {selectedTask.source_evidence.length > 0 && (
+              {selectedTask.sourceEvidence.length > 0 && (
                 <div className="mb-1 text-[10px] text-ink-faint">来源证据：</div>
               )}
               <ul className="space-y-0.5">
-                {selectedTask.source_evidence.map((ev, i) => (
+                {selectedTask.sourceEvidence.map((ev, i) => (
                   <li key={i} className="font-mono text-[10px] text-ink-faint">
                     📄 {ev.path}{ev.lines && `:${ev.lines}`} {ev.note && `— ${ev.note}`}
                   </li>
@@ -386,13 +386,13 @@ export default function CourseGeneratePage() {
           )}
 
           {/* 知识需求 */}
-          {blueprint.knowledge_requirements.length > 0 && (
+          {blueprint.knowledgeRequirements.length > 0 && (
             <>
               <div className="mb-1 text-[11px] font-medium text-ink-faint">知识需求</div>
               <div className="flex flex-wrap gap-1">
-                {blueprint.knowledge_requirements.map((k) => (
-                  <Badge key={k.concept_id} tone={k.is_existing ? 'ok' : 'warn'}>
-                    {k.title}{k.is_existing ? '' : '（候选）'}
+                {blueprint.knowledgeRequirements.map((k) => (
+                  <Badge key={k.conceptId} tone={k.isExisting ? 'ok' : 'warn'}>
+                    {k.title}{k.isExisting ? '' : '（候选）'}
                   </Badge>
                 ))}
               </div>

@@ -38,11 +38,11 @@ export const claimSchema = z.object({
 
 export const analysisSchema = z.object({
   summary: z.string().default(''),
-  tech_stack: z.array(z.string()).default([]),
-  entry_points: z.array(z.string()).default([]),
+  techStack: z.array(z.string()).default([]),
+  entryPoints: z.array(z.string()).default([]),
   modules: z.array(claimSchema).default([]),
   behaviors: z.array(claimSchema).default([]),
-  tests_summary: z.string().default(''),
+  testsSummary: z.string().default(''),
   dependencies: z.array(z.string()).default([]),
   limitations: z.array(z.string()).default([]),
   claims: z.array(claimSchema).default([]),
@@ -52,11 +52,11 @@ export const milestoneSchema = z.object({
   milestoneId: z.string(),
   title: z.string(),
   description: z.string().default(''),
-  target_features: z.array(z.string()).default([]),
+  targetFeatures: z.array(z.string()).default([]),
   deliverables: z.array(z.string()).default([]),
-  depends_on: z.array(z.string()).default([]),
-  acceptance_criteria: z.array(z.string()).default([]),
-  estimated_effort_band: z.string().default('medium'),
+  dependsOn: z.array(z.string()).default([]),
+  acceptanceCriteria: z.array(z.string()).default([]),
+  estimatedEffortBand: z.string().default('medium'),
 })
 
 export const taskSpecSchema = z.object({
@@ -64,48 +64,48 @@ export const taskSpecSchema = z.object({
   milestoneId: z.string(),
   title: z.string(),
   description: z.string().default(''),
-  depends_on: z.array(z.string()).default([]),
-  required_concepts: z.array(z.string()).default([]),
-  learning_objectives: z.array(z.string()).default([]),
-  expected_files: z.array(z.string()).default([]),
+  dependsOn: z.array(z.string()).default([]),
+  requiredConcepts: z.array(z.string()).default([]),
+  learningObjectives: z.array(z.string()).default([]),
+  expectedFiles: z.array(z.string()).default([]),
   deliverables: z.array(z.string()).default([]),
-  acceptance_criteria: z.array(z.string()).default([]),
-  test_strategy: z.string().default(''),
-  hints_outline: z.array(z.string()).default([]),
-  source_evidence: z.array(evidenceSchema).default([]),
+  acceptanceCriteria: z.array(z.string()).default([]),
+  testStrategy: z.string().default(''),
+  hintsOutline: z.array(z.string()).default([]),
+  sourceEvidence: z.array(evidenceSchema).default([]),
 })
 
 export const knowledgeSchema = z.object({
-  concept_id: z.string(),
+  conceptId: z.string(),
   title: z.string(),
   description: z.string().default(''),
   prerequisites: z.array(z.string()).default([]),
-  related_tasks: z.array(z.string()).default([]),
-  is_existing: z.boolean().default(false),
+  relatedTasks: z.array(z.string()).default([]),
+  isExisting: z.boolean().default(false),
 })
 
 export const blueprintSchema = z.object({
   project: z.object({
     title: z.string(),
     description: z.string().default(''),
-    source_url: z.string(),
-    commit_sha: z.string(),
+    sourceUrl: z.string(),
+    commitSha: z.string(),
     license: z.record(z.string(), z.unknown()).default({}),
-    tech_stack: z.array(z.string()).default([]),
-    final_artifact: z.string().default(''),
-    target_level: z.string().default('beginner'),
+    techStack: z.array(z.string()).default([]),
+    finalArtifact: z.string().default(''),
+    targetLevel: z.string().default('beginner'),
     difficulty: z.string().default('medium'),
     goals: z.array(z.string()).default([]),
-    non_goals: z.array(z.string()).default([]),
-    runtime_requirements: z.array(z.string()).default([]),
+    nonGoals: z.array(z.string()).default([]),
+    runtimeRequirements: z.array(z.string()).default([]),
     evidence: z.array(evidenceSchema).default([]),
   }),
   milestones: z.array(milestoneSchema).min(1),
   tasks: z.array(taskSpecSchema).min(1),
-  knowledge_requirements: z.array(knowledgeSchema).default([]),
-  blueprint_version: z.number().int().default(1),
-  generator_version: z.string().default(''),
-  generation_status: z.string().default('draft'),
+  knowledgeRequirements: z.array(knowledgeSchema).default([]),
+  blueprintVersion: z.number().int().default(1),
+  generatorVersion: z.string().default(''),
+  generationStatus: z.string().default('draft'),
   warnings: z.array(z.string()).default([]),
 })
 
@@ -117,27 +117,27 @@ export const validationSchema = z.object({
     severity: z.enum(['error', 'warning']).default('error'),
     path: z.string().default(''),
   })).default([]),
-  checked_at: z.string(),
+  checkedAt: z.string(),
 })
 
 export const generationSchema = z.object({
   id: z.string().uuid(),
-  source_url: z.string(),
+  sourceUrl: z.string(),
   status: z.enum(COURSE_STATUSES),
   stage: z.string().nullable().default(null),
   progress: z.number().int().default(0),
   error: z.string().nullable().default(null),
   warnings: z.array(z.string()).default([]),
-  repo_owner: z.string().nullable().default(null),
-  repo_name: z.string().nullable().default(null),
-  commit_sha: z.string().nullable().default(null),
-  default_branch: z.string().nullable().default(null),
+  repoOwner: z.string().nullable().default(null),
+  repoName: z.string().nullable().default(null),
+  commitSha: z.string().nullable().default(null),
+  defaultBranch: z.string().nullable().default(null),
   license: z.record(z.string(), z.unknown()).nullable().default(null),
   stats: z.record(z.string(), z.unknown()).nullable().default(null),
-  repair_rounds: z.number().int().default(0),
-  published_at: z.string().nullable().default(null),
-  created_at: z.string(),
-  updated_at: z.string(),
+  repairRounds: z.number().int().default(0),
+  publishedAt: z.string().nullable().default(null),
+  createdAt: z.string(),
+  updatedAt: z.string(),
 })
 
 export type CourseGeneration = z.infer<typeof generationSchema>
@@ -189,7 +189,7 @@ export async function publishCourseGeneration(id: string): Promise<{
 }> {
   const data = await api.post<unknown>(`/course-generations/${id}/publish`)
   return z.object({
-    id: z.string(), status: z.string(), published_at: z.string().nullable(),
+    id: z.string(), status: z.string(), publishedAt: z.string().nullable(),
     taskCount: z.number().int(), milestoneCount: z.number().int(),
   }).parse(data)
 }

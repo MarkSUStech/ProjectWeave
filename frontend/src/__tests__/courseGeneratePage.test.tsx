@@ -18,52 +18,52 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 const generation = (overrides: Record<string, unknown> = {}) => ({
-  id: UUID, source_url: 'https://github.com/karpathy/micrograd',
+  id: UUID, sourceUrl: 'https://github.com/karpathy/micrograd',
   status: 'fetching', stage: 'fetching', progress: 10,
-  error: null, warnings: [], repo_owner: 'karpathy', repo_name: 'micrograd',
-  commit_sha: 'a'.repeat(40), default_branch: 'master', license: { spdx: 'MIT' },
-  stats: { textFiles: 8 }, repair_rounds: 0, published_at: null,
-  created_at: '2026-10-11T00:00:00Z', updated_at: '2026-10-11T00:00:00Z',
+  error: null, warnings: [], repoOwner: 'karpathy', repoName: 'micrograd',
+  commitSha: 'a'.repeat(40), defaultBranch: 'master', license: { spdx: 'MIT' },
+  stats: { textFiles: 8 }, repairRounds: 0, publishedAt: null,
+  createdAt: '2026-10-11T00:00:00Z', updatedAt: '2026-10-11T00:00:00Z',
   ...overrides,
 })
 
 const blueprint = {
   project: {
     title: '从零实现自动微分引擎', description: 'desc',
-    source_url: 'https://github.com/karpathy/micrograd', commit_sha: 'a'.repeat(40),
-    license: { spdx: 'MIT' }, tech_stack: ['Python'],
-    final_artifact: '可训练 MLP', target_level: 'beginner', difficulty: 'medium',
-    goals: [], non_goals: [], runtime_requirements: [], evidence: [],
+    sourceUrl: 'https://github.com/karpathy/micrograd', commitSha: 'a'.repeat(40),
+    license: { spdx: 'MIT' }, techStack: ['Python'],
+    finalArtifact: '可训练 MLP', targetLevel: 'beginner', difficulty: 'medium',
+    goals: [], nonGoals: [], runtimeRequirements: [], evidence: [],
   },
   milestones: [
-    { milestoneId: 'ms-1', title: '数值基础', description: '', target_features: [],
-      deliverables: ['Value'], depends_on: [], acceptance_criteria: ['加法'], estimated_effort_band: 'small' },
+    { milestoneId: 'ms-1', title: '数值基础', description: '', targetFeatures: [],
+      deliverables: ['Value'], dependsOn: [], acceptanceCriteria: ['加法'], estimatedEffortBand: 'small' },
   ],
   tasks: [
     { taskId: 't1', milestoneId: 'ms-1', title: 'Value 与运算', description: '创建 Value',
-      depends_on: [], required_concepts: [], learning_objectives: [], expected_files: [],
-      deliverables: ['value.py'], acceptance_criteria: ['加法可运行'],
-      test_strategy: '断言', hints_outline: [], source_evidence: [{ path: 'micrograd/engine.py', note: '参考', lines: '' }] },
+      dependsOn: [], requiredConcepts: [], learningObjectives: [], expectedFiles: [],
+      deliverables: ['value.py'], acceptanceCriteria: ['加法可运行'],
+      testStrategy: '断言', hintsOutline: [], sourceEvidence: [{ path: 'micrograd/engine.py', note: '参考', lines: '' }] },
   ],
-  knowledge_requirements: [
-    { concept_id: 'py.classes', title: '类', description: '', prerequisites: [], related_tasks: [], is_existing: false },
+  knowledgeRequirements: [
+    { conceptId: 'py.classes', title: '类', description: '', prerequisites: [], relatedTasks: [], isExisting: false },
   ],
-  blueprint_version: 1, generator_version: 'v1', generation_status: 'draft', warnings: [],
+  blueprintVersion: 1, generatorVersion: 'v1', generationStatus: 'draft', warnings: [],
 }
 
 const analysis = {
   status: 'draft',
   analysis: {
-    summary: '微型自动微分引擎', tech_stack: ['Python'], entry_points: [],
+    summary: '微型自动微分引擎', techStack: ['Python'], entryPoints: [],
     modules: [{ statement: 'Value 标量自动微分', kind: 'confirmed', sources: [{ path: 'micrograd/engine.py' }] }],
-    behaviors: [], tests_summary: '', dependencies: [], limitations: [], claims: [],
+    behaviors: [], testsSummary: '', dependencies: [], limitations: [], claims: [],
   },
   toolCalls: [{ tool: 'get_repository_metadata', ok: true, args: {} }],
 }
 
 const blueprintResp = {
   status: 'draft', blueprint,
-  validation: { passed: true, issues: [], checked_at: '2026-10-11T00:00:00Z' },
+  validation: { passed: true, issues: [], checkedAt: '2026-10-11T00:00:00Z' },
 }
 
 let fetchImpl: (url: string, init?: RequestInit) => Promise<Response>
