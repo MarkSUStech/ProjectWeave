@@ -837,3 +837,9 @@ manifest 可降级/外键语义/completed≠发布/预算可重置）：
       不重写）→ 独立评估 passed（含稳定性 2/2）→ checkpoint → submit →
       **自动发布 ready CourseRelease**（检查点链 + 最终 CTest + instantiate
       学生项目成功）；E2E B 在契约冻结下通过（manifest 保留前序回归）
+
+**P8.2.3.1 真实 DeepSeek 加固验证（完整发布链）**：真实 Agent 工具循环完成
+t2 → 全任务完成（t1+t2）→ **自动发布 ready CourseRelease**
+（`ce5dc069-57c9-4b9f-b995-b84ae7e9d139`，2/2 任务，最终全量 CTest 真沙箱
+通过）→ 学生项目实例化成功（201）。全程 69s、单一 slice 完成（预算内），
+Fingerprint/契约/租约校验全部生效。
