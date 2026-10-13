@@ -690,3 +690,18 @@
 - **模型路由**：`COURSE_{GENERATION,REASONING,REPAIR}_MODEL` + 每任务 LLM/Token/耗时/沙箱上限；`_routed_provider` 仅对真实 DeepSeek 生效（Mock 永不路由，测试零费用）。
 
 **验证**：后端 352 全过（含双线程并发抢占恰一成功、租约过期接管、stale writer 拒绝、拆分 DAG 过验证器、严格哈希拒绝+回填、Starter Overlay Base）；Mock 四任务全链 + 断点恢复 E2E 全过；真实 DeepSeek 结果见 PROGRESS 运行记录。
+
+## D48 · P8.2.3 Autonomous Course Development Harness
+
+**日期**：2026-10-13。
+
+**架构**：课程生产从「一次生成→验证→修补」升级为「Agent 在持久化工作区中持续开发」。五个分离：Agent Controller（LLM 推理）/ Tool Runtime（白名单工具）/ Course Workspace（版本化）/ Independent Evaluator（独立验收）/ Session Persistence（预算与恢复）。
+
+- **CourseDevSession**（course_dev_sessions 表，迁移 6a388ff17721/a74f266d552d）：状态机 pending→developing→(paused⇄developing)→completed|failed|cancelled（服务端权威）；原子租约抢占（行锁）；token/沙箱/轮次预算真实计量。
+- **CourseWorkspace**（DB JSON）：reference_files + starter_overlay（两阶段基线，服务端权威回填）+ manifest/instructions/hints + revisions 不可变历史；一切修改经 ChangeApplier（严格哈希/原子/路径校验）。
+- **工具注册表**（复用 P6 ToolRegistry）：Workspace（list/read/apply/update_material）+ Execution（cmake_configure/build、run_ctest、run_executable——全走受限 Docker CMake Runtime，无任意 Shell）+ Evaluation（evaluate_lesson 独立评估、get_evaluation_feedback）+ Recovery（save_checkpoint 前置校验 engineering=passed、rollback_workspace、submit_task）。工具结果结构化截断回填（不灌全量日志）。
+- **真实工具循环**（CourseDevelopmentAgent）：DeepSeek function calling 多轮；预算 maxRounds=14/maxToolCalls=40/maxTokens=220k/maxSandboxRuns=16；无进展熔断。Agent 不能自评通过——save_checkpoint 由 Harness 校验独立评估结果。
+- **Independent Evaluator**：复用 verify_cpp_cmake_task 八步验证（engineering 确定性）+ starter 教学约束（pedagogy：确定性部分+启发式标注）+ 实验稳定性（N 次独立 Clean Sandbox 重复 CTest，flakySuspected）+ 轻量 Mutation Testing（==/!=、边界算子，独立预算，compile-error 不算 killed）。
+- **Resume**：start_session 自动复用兼容 Checkpoint 连续前缀（零 LLM）；slice 预算耗尽 → paused 可续；Working Revision 与 Verified Checkpoint 严格区分。
+
+**验证**：Harness 确定性单测 5（workspace 原子性/overlay 权威基线/revision 历史/材料分离）；真实 Docker E2E B（受控链接故障→Agent 读诊断→修 CMakeLists→真实构建通过→CTest→独立评估 passed→checkpoint 固化→submit）与控制/隔离 E2E（save 未过评估拒绝/rollback/取消）；后端 358 全过 + 前端 284 全过；真实 DeepSeek 工具循环见 PROGRESS 记录。

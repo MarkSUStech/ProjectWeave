@@ -768,3 +768,36 @@ Overlay Base 服务端回填）→ ③t3-b 链接错误（→ 系统化修复：
 仍不足——deepseek-chat 在受约束增量协议下的输出方差是主要瓶颈。
 已按规范如实记录；下一阶段建议：启用 COURSE_REASONING_MODEL 路由到
 推理模型做 A/B（配置已就绪，未在本会话启用以控费用）。
+
+### P8.2.3 Autonomous Course Development Harness（D48）
+
+- [x] **架构**：Agent Controller（LLM）/ Tool Runtime（白名单）/
+      Course Workspace（版本化）/ Independent Evaluator / Session
+      Persistence 五分离；Agent 只提出行动，Harness 执行与判定
+- [x] **CourseDevSession**（表 course_dev_sessions，迁移
+      6a388ff17721 + a74f266d552d）：状态机（pending/developing/paused/
+      completed/failed/cancelled，服务端权威）+ 原子租约 + 真实用量计量
+      （token/工具/沙箱）+ 预算（轮次/工具/Token/沙箱/无进展熔断）
+- [x] **CourseWorkspace**：reference + starter_overlay（两阶段基线）+
+      manifest/instructions/hints + revisions 不可变历史；修改全走
+      ChangeApplier（严格哈希/原子/路径校验）
+- [x] **工具注册表**（复用 P6 ToolRegistry）：list/read/apply/
+      update_material + cmake_configure/build、run_ctest、run_executable
+      （全走受限 Docker CMake Runtime，无任意 Shell）+ evaluate_lesson
+      （独立评估）+ save_checkpoint（前置校验）/rollback/submit_task；
+      工具结果结构化截断回填
+- [x] **独立 Evaluator**：verify_cpp_cmake_task 八步（engineering 确定性）
+      + pedagogy（starter 预期失败确定性 + 启发式标注）+ 稳定性（N 次独立
+      Clean Sandbox）+ 轻量 Mutation（边界算子，compile-error 不算 killed）
+- [x] **API**：POST /course-dev-sessions、GET /{id}、POST /{id}/run|pause|cancel
+- [x] **前端**：开发会话区域（状态/预算/三维度评估/真实工具时间线）
+- [x] 验证：后端 **358 全过**（+5 harness 单测）；前端 **284 全过**；
+      **E2E B**（受控链接故障→Agent 真实读诊断→修 CMake→真实构建/CTest→
+      独立评估 passed→checkpoint→submit，真 Docker）+ 控制/隔离 E2E 全过
+- [x] **真实 DeepSeek 工具循环（E2E A）**：自主多轮调用 22 个真实工具
+      （read×7 → apply×4 → configure → build×2 → ctest×2 → update_material
+      → evaluate×2 → save_checkpoint → submit），15 轮/85,791 tokens/
+      5 次沙箱/69s 完成 t2 Entity 任务——engineering/pedagogy/stability
+      全部 passed，Verified Checkpoint 已固化（Agent 自己设计了 header-only
+      Entity + spawn/valid 测试，真实 CMake/CTest 通过）。第一轮在 14 轮
+      旧预算下评估已过但未及保存（已提高默认预算），第二轮完整闭环。

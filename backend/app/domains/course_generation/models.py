@@ -128,8 +128,8 @@ class CourseCheckpoint(Base):
     generation_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("course_generations.id", ondelete="CASCADE"), index=True
     )
-    release_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("course_releases.id", ondelete="CASCADE"), index=True
+    release_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("course_releases.id", ondelete="CASCADE"), index=True, nullable=True
     )
     task_seq: Mapped[int] = mapped_column(Integer)             # 任务序（0 基）
     task_id: Mapped[str] = mapped_column(String(60))
@@ -166,8 +166,8 @@ class GenerationJob(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    release_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("course_releases.id", ondelete="CASCADE"), index=True
+    release_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("course_releases.id", ondelete="CASCADE"), index=True, nullable=True
     )
     generation_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     status: Mapped[str] = mapped_column(String(20), default="running", index=True)

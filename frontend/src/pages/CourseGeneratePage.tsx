@@ -24,6 +24,10 @@ import {
   type ReleaseDetail,
   type TaskSpec,
   type ValidationInfo,
+  createHarnessSession,
+  getHarnessSession,
+  runHarnessSlice,
+  type HarnessSessionStatus,
 } from '../api/courseGeneration'
 import { api, ApiError } from '../api/client'
 import { Badge } from '../components/ui/Badge'
@@ -58,6 +62,8 @@ export default function CourseGeneratePage() {
   const [error, setError] = useState<string | null>(null)
   const [release, setRelease] = useState<ReleaseDetail | null>(null)
   const [busy, setBusy] = useState(false)
+  const [harness, setHarness] = useState<HarnessSessionStatus | null>(null)
+  const [harnessBusy, setHarnessBusy] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const stopPolling = useCallback(() => {
@@ -163,6 +169,32 @@ export default function CourseGeneratePage() {
       setBusy(false)
     }
   }, [release])
+
+  const startHarness = useCallback(async () => {
+    if (!gen) return
+    setHarnessBusy(true)
+    try {
+      const created = await createHarnessSession(gen.id)
+      setHarness(await getHarnessSession(created.sessionId))
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setHarnessBusy(false)
+    }
+  }, [gen])
+
+  const runHarness = useCallback(async () => {
+    if (!harness) return
+    setHarnessBusy(true)
+    try {
+      await runHarnessSlice(harness.sessionId)
+      setHarness(await getHarnessSession(harness.sessionId))
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setHarnessBusy(false)
+    }
+  }, [harness])
 
   const startLearning = useCallback(async () => {
     if (!release) return
@@ -431,6 +463,68 @@ export default function CourseGeneratePage() {
               <Button size="sm" variant="outline" disabled={busy} onClick={() => void retry()}>重试生成</Button>
             )}
           </div>
+        </section>
+      )}
+
+      {/* Harness 开发会话（P8.2.3） */}
+      {gen?.status === 'published' && !harness && (
+        <section className="mb-6 rounded-lg border border-edge-soft p-4">
+          <h2 className="mb-1 text-sm font-medium text-ink">Agent 自主开发（Harness）</h2>
+          <p className="mb-3 text-xs leading-relaxed text-ink-dim">
+            AI Agent 在受控工作区中持续开发课程：读工程 → 修改文件 → 真实 CMake/CTest
+            执行 → 根据错误自主修复 → 独立评估 → 保存检查点。所有工具调用真实执行。
+          </p>
+          <Button size="sm" variant="outline" disabled={harnessBusy} onClick={() => void startHarness()}>
+            启动开发会话
+          </Button>
+        </section>
+      )}
+      {harness && (
+        <section className="mb-6 rounded-lg border border-edge-soft p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-ink">开发会话 · {harness.state}</h2>
+            <div className="flex gap-2">
+              {harness.state !== 'completed' && (
+                <Button size="sm" disabled={harnessBusy} onClick={() => void runHarness()}>
+                  {harnessBusy ? '执行中…' : '执行一轮'}
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="mb-2 text-[11px] text-ink-faint">
+            当前任务 {harness.currentTaskId ?? '—'} · 工具调用 {harness.toolCallCount} ·
+            评估 {harness.evaluationCount} · Token {String((harness.tokenUsage as Record<string, unknown>)?.totalTokens ?? 0)} ·
+            沙箱 {String((harness.sandboxUsage as Record<string, unknown>)?.runs ?? 0)} 次
+          </div>
+          {harness.error && (
+            <p className="mb-2 text-xs text-danger">{harness.error}</p>
+          )}
+          {(() => {
+            const evaluation = (harness.lastFeedback as Record<string, unknown>)?.evaluation as
+              Record<string, string> | undefined
+            if (!evaluation) return null
+            return (
+              <div className="mb-2 flex gap-3 text-[11px]">
+                <span>工程正确性：{evaluation.engineering}</span>
+                <span>教学质量：{evaluation.pedagogy}</span>
+                <span>稳定性：{evaluation.stability}</span>
+              </div>
+            )
+          })()}
+          <details className="rounded border border-edge-soft bg-panel px-2.5 py-2 text-xs">
+            <summary className="cursor-pointer text-ink-dim">
+              Agent 活动时间线（{harness.timeline.length} 条真实工具调用）
+            </summary>
+            <ul className="mt-2 space-y-1">
+              {harness.timeline.slice(-20).reverse().map((e) => (
+                <li key={e.seq} className="text-ink-faint">
+                  <span className={e.ok ? 'text-ok' : 'text-danger'}>{e.ok ? '✔' : '✘'}</span>{' '}
+                  {e.tool ?? e.kind} {e.summary ? `— ${e.summary.slice(0, 80)}` : ''}
+                  {e.error ? ` · ${e.error.slice(0, 80)}` : ''}
+                </li>
+              ))}
+            </ul>
+          </details>
         </section>
       )}
 

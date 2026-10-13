@@ -354,3 +354,62 @@ export async function activateTask(projectId: string, taskId: string): Promise<A
   const data = await api.post<unknown>(`/projects/${projectId}/tasks/${taskId}/activate`, {})
   return data as ActivateResult
 }
+
+
+// ---------------------------------------------------------------- P8.2.3 Harness Session
+
+export const harnessTimelineEventSchema = z.object({
+  seq: z.number().int(),
+  at: z.string(),
+  kind: z.string(),
+  tool: z.string().nullable().default(null),
+  ok: z.boolean().default(true),
+  args: z.record(z.string(), z.unknown()).default({}),
+  summary: z.string().default(''),
+  error: z.string().nullable().default(null),
+})
+
+export const harnessSessionStatusSchema = z.object({
+  sessionId: z.string().uuid(),
+  state: z.string(),
+  currentTaskId: z.string().nullable().default(null),
+  workspaceRevision: z.number().int().default(0),
+  toolCallCount: z.number().int().default(0),
+  evaluationCount: z.number().int().default(0),
+  tokenUsage: z.record(z.string(), z.unknown()).default({}),
+  sandboxUsage: z.record(z.string(), z.unknown()).default({}),
+  budget: z.record(z.string(), z.unknown()).default({}),
+  lastFeedback: z.record(z.string(), z.unknown()).default({}),
+  timeline: z.array(harnessTimelineEventSchema).default([]),
+  error: z.string().nullable().default(null),
+})
+
+export type HarnessSessionStatus = z.infer<typeof harnessSessionStatusSchema>
+export type HarnessTimelineEvent = z.infer<typeof harnessTimelineEventSchema>
+
+export async function createHarnessSession(generationId: string): Promise<{ sessionId: string; state: string }> {
+  const data = await api.post<unknown>(`/course-dev-sessions?generationId=${generationId}`)
+  return z.object({ sessionId: z.string().uuid(), state: z.string() }).parse(data)
+}
+
+export async function getHarnessSession(id: string): Promise<HarnessSessionStatus> {
+  return harnessSessionStatusSchema.parse(await api.get<unknown>(`/course-dev-sessions/${id}`))
+}
+
+export async function runHarnessSlice(id: string): Promise<{
+  state: string; completed: boolean; rounds: number; toolCalls: number
+  tokens: number; sandboxRuns: number; timeline: HarnessTimelineEvent[]
+}> {
+  const data = await api.post<unknown>(`/course-dev-sessions/${id}/run`)
+  return z.object({
+    state: z.string(), completed: z.boolean(),
+    rounds: z.number().int(), toolCalls: z.number().int(),
+    tokens: z.number().int(), sandboxRuns: z.number().int(),
+    timeline: z.array(harnessTimelineEventSchema).default([]),
+  }).parse(data)
+}
+
+export async function pauseHarnessSession(id: string): Promise<{ state: string }> {
+  return z.object({ state: z.string() }).parse(
+    await api.post<unknown>(`/course-dev-sessions/${id}/pause`))
+}

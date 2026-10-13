@@ -7,6 +7,7 @@ from app.domains.assessments.router import router as assessments_router
 from app.domains.concepts.router import router as concepts_router
 from app.domains.curriculum.router import router as curriculum_router
 from app.domains.curriculum.router import tasks_scoped as curriculum_tasks_router
+from app.domains.course_generation.harness.router import router as course_harness_router
 from app.domains.course_generation.router import project_course_router
 from app.domains.course_generation.router import releases_router as course_releases_router
 from app.domains.course_generation.router import router as course_generation_router
@@ -37,6 +38,7 @@ api_router.include_router(executions_router)
 api_router.include_router(debugging_router)
 api_router.include_router(course_generation_router)
 api_router.include_router(course_releases_router)
+api_router.include_router(course_harness_router)
 api_router.include_router(project_course_router)
 api_router.include_router(tutor_router)
 api_router.include_router(settings_router)
