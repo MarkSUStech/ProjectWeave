@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.agents.schemas import extract_json_object  # noqa: F401
@@ -227,7 +228,7 @@ def _claim_job(release_id, generation_id) -> tuple | None:
     now = utcnow()
     with _session() as db:
         existing = db.scalar(select(GenerationJob).where(
-            GenerationJob.release_id == release_id))
+            GenerationJob.release_id == release_id).with_for_update())
         if existing is None:
             job = GenerationJob(
                 release_id=release_id, generation_id=generation_id,
@@ -236,7 +237,12 @@ def _claim_job(release_id, generation_id) -> tuple | None:
                 retry_count=1,
             )
             db.add(job)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                # 并发插入（唯一约束）→ 另一 worker 已建行——抢占失败
+                db.rollback()
+                return None
             return job.id, token
         # 原子抢占（事务 + 行锁）：非 running，或租约已过期（旧 worker 失联）。
         # PG 用 FOR UPDATE 行锁；SQLite 单写者天然串行——判定在 Python 侧

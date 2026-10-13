@@ -75,6 +75,7 @@ class CourseDevSession(Base):
     lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    pause_requested: Mapped[bool] = mapped_column(Boolean, default=False)
 
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

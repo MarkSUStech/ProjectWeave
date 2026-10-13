@@ -8,7 +8,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Uuid, Text, Boolean
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Uuid, Text, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -163,6 +163,7 @@ class GenerationJob(Base):
     __tablename__ = "generation_jobs"
     __table_args__ = (
         Index("ix_generation_jobs_release", "release_id"),
+        UniqueConstraint("release_id", name="uq_generation_jobs_release"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)

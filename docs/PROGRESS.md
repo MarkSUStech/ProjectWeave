@@ -843,3 +843,39 @@ t2 → 全任务完成（t1+t2）→ **自动发布 ready CourseRelease**
 （`ce5dc069-57c9-4b9f-b995-b84ae7e9d139`，2/2 任务，最终全量 CTest 真沙箱
 通过）→ 学生项目实例化成功（201）。全程 69s、单一 slice 完成（预算内），
 Fingerprint/契约/租约校验全部生效。
+
+### P8.2.3.2 全课程自主开发 + 发布恢复 + 协作取消（D50）
+
+- [x] **Final Evaluation/Repair 状态机**（修复发布失败死状态）：全部任务
+  完成 → final-evaluating（真全量 CTest + 稳定性 + Demo）→ publishing；
+  失败按类别分流——engineering/contract → final-repairing（基于最后
+  Verified Checkpoint 的修复工作区，Agent 可继续修）；infrastructure →
+  paused（数据库/租约/沙箱错误**不交给 AI 改代码**）。全部任务完成但
+  发布失败 → _build_controller 进入修复控制器（不再 422 死状态）
+- [x] **Cooperative Pause/Cancel**：pause_requested/cancel_requested 持久化
+  （迁移 e7341bdac4ec）；controller 在**每次 LLM 调用前 + 每个工具执行前**
+  实时读 DB 检查——暂停/取消真正中断循环（单测证明取消后 LLM 零调用、
+  暂停后第二轮 LLM 零调用）；取消后发布被拒
+- [x] **Lease/并发修复**：generation_jobs.release_id 唯一约束（迁移
+  fe28af09866a）+ 插入 IntegrityError 竞争防护——双线程并发抢占测试
+  由间歇失败（2 winners）修复为 5/5 稳定恰一成功
+- [x] **Effective Blueprint 单一权威**：发布使用 session 实际蓝图（含
+  拆分映射/任务/里程碑 + effectiveBlueprint 溯源块）；artifact taskId
+  集合必须与蓝图任务集合一致（不一致拒发 contract 失败）
+- [x] **Final Evaluation Report**：{blueprintHash/checkpointCount/
+  requiredTests/executedTests/passedTests/demoTargets/stability}——
+  全部真实执行数据（全量 CTest 计数 + 2 次 Clean Sandbox 稳定性 + Demo
+  逐目标运行）；发布幂等（同 session 已发布直接返回）
+- [x] **expectedFiles 权威注入**：harness evaluate 把 starter_overlay 推导
+  的 expectedFiles 注入材料——下游 verify/守卫同源判定（修复空
+  instructions 时全工程启发式泄露误报）
+- [x] **Level B 全课程 E2E（真 Docker）通过**：t1 World→t2 Entity→t3
+  Integration→t4 Demo（banner 化 Demo 任务保证 CTest 可验证挖空）从零
+  开发，每任务独立评估（真 CMake/CTest/稳定性 2/2）+ Verified Checkpoint
+  （四任务累积快照 + 回归注册表）→ Final Evaluation（全量 CTest + Demo）
+  → **自动发布 ready CourseRelease** → 学生四任务完整旅程（starter 态
+  真实失败→实现→服务端 CTest 验收→解锁→final-report 4/4）
+- [x] 验证：后端 **373/374**（test_debugging_api 偶发时序 flake 与本轮
+  无关，独立复跑即绿；race 测试修复后 5/5 稳定）；前端 **284 全过**；
+  harness 加固单测 16 过（含 Final Repair 控制器/失败分类/协作取消/
+  暂停边界/取消拒发布）

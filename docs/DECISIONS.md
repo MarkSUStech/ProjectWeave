@@ -720,3 +720,14 @@
 - **Frozen AcceptanceContract**：任务开始冻结（task_spec_hash + requiredBehaviors（语义要求，Evaluator 真实验证裁决）+ priorRegressionTests（确定性检查））；manifest 更新不得删除前序回归；Agent 可实现/命名自己的测试（Agent-Produced Test Implementation）。
 - **发布**：检查点链（task_seq 连续 + prev_snapshot_hash 链）→ 聚合 artifacts/reference_store → 最终全量 CTest + runTargets Demo（真沙箱）→ ready（事务）；失败→session failed + publishFailure（检查点保留可续修）；Release.id 回写 session。
 - **外键**：开发中 checkpoint release_id=NULL；发布后由 Release 持有 artifacts/reference_store（checkpoint 保持溯源）。
+
+## D50 · P8.2.3.2 全课程自主开发：Final 状态机 / 协作取消 / Effective Blueprint / 消息清洗
+
+**日期**：2026-10-13。
+
+- **Final Evaluation/Repair 状态机**（修复死状态）：任务全完成 ≠ 可发布——进入 final-evaluating（真全量 CTest + 2 次 Clean Sandbox 稳定性 + Demo 逐目标运行）；失败分类（engineering/contract → final-repairing：基于最后 Verified Checkpoint 的修复工作区，Agent 可继续修；infrastructure → paused：数据库/租约/沙箱错误不交给 AI 改代码）。`_build_controller` 在全部任务完成但发布失败时返回修复控制器（不再 422）。
+- **Cooperative Pause/Cancel**：`pause_requested` 持久化列；controller 在每次 LLM 调用前 + 每个工具执行前实时读 DB——取消后 LLM 零调用、暂停后下一轮零调用（单测证明实际执行停止而非仅状态变更）；取消后发布被拒。
+- **并发修复**：generation_jobs.release_id 唯一约束 + INSERT IntegrityError 防护——双线程抢占测试由间歇 2-winners 修复为 5/5 恰一成功。
+- **Effective Blueprint 单一权威**：发布蓝图 = session 实际蓝图（拆分映射 + 任务 + milestones + effectiveBlueprint 溯源块）；artifact taskId 集合必须等于蓝图任务集合（不一致 → contract 失败拒发）。
+- **Final Evaluation Report**：全真实执行数据（全量 CTest 计数 + 稳定性 attempts/passes + Demo 逐目标）；同 session 发布幂等。
+- **消息清洗（DeepSeek 400 修复）**：slice 中断可能留下孤儿 tool_calls（assistant 声明了调用但 tool 响应未写入）→ API 400。`_sanitize_messages` 重建合法序列：孤儿 tool_calls 补"被中断"响应、孤儿 tool 消息删除；run 入口与 Runtime Snapshot 持久化前均清洗。

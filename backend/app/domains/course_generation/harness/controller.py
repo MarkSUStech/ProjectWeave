@@ -96,6 +96,9 @@ class HarnessController:
     eval_fingerprint: str = ""      # 最近评估绑定的工作区指纹（D49）
     resumed: bool = False           # 本 slice 是否从 Runtime 恢复
     acceptance: object = None       # 冻结验收契约（D49）
+    final_phase: str = ""           # developing | repairing（D50）
+    control_state: dict = None      # {pause_requested, cancel_requested}（D50）
+    _control_reader: object = None
     timeline: list = None
     no_progress: int = 0
     completed: bool = False
@@ -149,6 +152,22 @@ class HarnessController:
                 "note": "工作区已修改——需重新 evaluate_lesson",
             }
 
+    def _control_check(self) -> str:
+        """D50 Cooperative Cancellation：查询服务端控制状态。
+
+        返回 "continue" | "paused" | "cancelled"。LLM 调用前、工具执行前、
+        Checkpoint/发布前由 run 循环调用。每次实时读 DB（不缓存）。
+        """
+        reader = getattr(self, "_control_reader", None)
+        state = reader() if reader else self.control_state
+        if state is None:
+            return "continue"
+        if state.get("cancel_requested"):
+            return "cancelled"
+        if state.get("pause_requested"):
+            return "paused"
+        return "continue"
+
     def _session_lease_valid(self) -> bool:
         """会话租约校验（CourseDevSession 行，非 GenerationJob）。"""
         if self.job_lease is None:
@@ -198,6 +217,15 @@ class HarnessController:
         expected = (self.workspace.instructions or {}).get("expectedFiles") or []
         declared = set(self.workspace.starter_overlay)
         expected = [p for p in expected if p in declared] or sorted(declared)
+        # D50：把权威 expectedFiles 注入材料（下游 verify/守卫同源判定，
+        # 避免空 instructions 时退化为全工程启发式泄露误报）
+        if not (self.workspace.instructions or {}).get("expectedFiles"):
+            self.workspace.instructions = {
+                **(self.workspace.instructions or {}),
+                "expectedFiles": expected,
+                "title": (self.workspace.instructions or {}).get(
+                    "title", self.task_spec.get("title", "任务"))}
+            material["instructions"] = dict(self.workspace.instructions)
         # 独立一致性 + 守卫（复用）
         from app.domains.course_generation.lessons.consistency_validator import (
             validate_material,
@@ -322,6 +350,66 @@ class HarnessController:
         self.resumed = True
         return True
 
+    @staticmethod
+    def _sanitize_messages(messages: list) -> list:
+        """保证消息历史对 DeepSeek 合法（D50）。
+
+        每条含 tool_calls 的 assistant 消息后必须紧跟对应的 tool 响应；
+        slice 中断（暂停/预算）可能留下孤儿 tool_calls——补一个
+        "执行被中断" 的 tool 响应使其合法，否则 API 400。
+        """
+        out = []
+        for message in messages:
+            out.append(message)
+            if message.get("role") == "assistant" and message.get("tool_calls"):
+                emitted = set()
+                for call in message["tool_calls"]:
+                    cid = call.get("id") if isinstance(call, dict) else call[                         "function"]["id"]
+                    emitted.add(cid)
+                # 扫描后续是否已有响应（在原 messages 中）
+        # 简化两遍法：重建序列
+        result = []
+        i = 0
+        msgs = list(messages)
+        while i < len(msgs):
+            message = msgs[i]
+            result.append(message)
+            if message.get("role") == "assistant" and message.get("tool_calls"):
+                expected = {c.get("id") for c in message["tool_calls"]
+                            if isinstance(c, dict)}
+                answered = set()
+                j = i + 1
+                while j < len(msgs) and msgs[j].get("role") == "tool":
+                    answered.add(msgs[j].get("tool_call_id"))
+                    result.append(msgs[j])
+                    j += 1
+                missing = expected - answered
+                for cid in sorted(missing):
+                    result.append({
+                        "role": "tool", "tool_call_id": cid,
+                        "content": '{"interrupted": true, '
+                                   '"note": "该工具调用被暂停/预算中断，未执行"}'})
+                i = j
+            else:
+                i += 1
+        # 尾部孤儿 tool 消息（无前导 tool_calls）删除
+        cleaned = []
+        pending_ids = set()
+        for message in result:
+            if message.get("role") == "assistant" and message.get("tool_calls"):
+                pending_ids = {c.get("id") for c in message["tool_calls"]}
+                cleaned.append(message)
+            elif message.get("role") == "tool":
+                if message.get("tool_call_id") in pending_ids:
+                    cleaned.append(message)
+                    pending_ids.discard(message.get("tool_call_id"))
+                # 孤儿 tool（无对应 tool_calls）丢弃
+            else:
+                if message.get("role") == "assistant" and not message.get("tool_calls")                         and message.get("content") is None:
+                    continue  # 空 assistant 跳过
+                cleaned.append(message)
+        return cleaned
+
     def run(self) -> dict:
         registry = build_harness_tools(self.workspace, self)
         tools_schema = [
@@ -345,6 +433,8 @@ class HarnessController:
                 f"{self.task_spec.get('title', '')}。通过 evaluate_lesson 并"
                 " save_checkpoint + submit_task 完成。"},
         ]
+        # D50：恢复/中断后的消息清洗（孤儿 tool_calls 补响应）
+        self.llm_messages = self._sanitize_messages(self.llm_messages)
         budget = DEFAULT_BUDGET
         ctx = ToolContext(db=None, project_id=None)
 
@@ -359,6 +449,16 @@ class HarnessController:
                                               f" tokens={self.tokens},"
                                               f" sandbox={self.sandbox_runs}）——"
                                               "保存状态等待恢复")
+                break
+            # D50：LLM 调用前检查控制状态（暂停/取消真正中断）
+            control = self._control_check()
+            if control == "cancelled":
+                self._append_timeline("cancelled", ok=False,
+                                      summary="用户取消——循环终止")
+                break
+            if control == "paused":
+                self._append_timeline("paused", ok=False,
+                                      summary="用户暂停——循环在安全边界停止")
                 break
             self.rounds += 1
             result = self.provider.chat_with_tools(self.llm_messages, tools_schema)
@@ -384,6 +484,13 @@ class HarnessController:
                                       c.get("arguments", {}), ensure_ascii=False)}}
                     for c in result.tool_calls]})
             for call in result.tool_calls:
+                # D50：每个工具执行前检查（耗时沙箱前同样生效）
+                control = self._control_check()
+                if control in ("cancelled", "paused"):
+                    self._append_timeline(control, ok=False,
+                                          summary=f"用户{control}——跳过工具 "
+                                                  f"{call.get('name', '')}")
+                    break
                 self.tool_calls += 1
                 outcome = self._execute_tool(registry, ctx, call)
                 self.llm_messages.append({
@@ -477,7 +584,8 @@ class HarnessController:
                 "baseSnapshotHash": self._base_hash(),
                 "workspaceRevision": self.workspace.revision,
                 "workspace": self.workspace.to_dict(),
-                "agentMessages": (self.llm_messages or [])[-40:],
+                "agentMessages": self._sanitize_messages(
+                    (self.llm_messages or [])[-40:]),
                 "lastEvaluation": (self.last_feedback or {}),
                 "lastFingerprint": self.eval_fingerprint,
                 "consumedTokens": self.tokens,
