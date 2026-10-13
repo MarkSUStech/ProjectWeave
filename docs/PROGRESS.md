@@ -801,3 +801,39 @@ Overlay Base 服务端回填）→ ③t3-b 链接错误（→ 系统化修复：
       全部 passed，Verified Checkpoint 已固化（Agent 自己设计了 header-only
       Entity + spawn/valid 测试，真实 CMake/CTest 通过）。第一轮在 14 轮
       旧预算下评估已过但未及保存（已提高默认预算），第二轮完整闭环。
+
+### P8.2.3.1 Harness 生产加固（D49）
+
+修复 P8.2.3 审查确认的 7 个问题（Resume 丢失/评估未绑版本/稳定性可绕过/
+manifest 可降级/外键语义/completed≠发布/预算可重置）：
+
+- [x] **Evaluation Fingerprint**（`controller.evaluation_fingerprint`）：
+      绑定 taskId/revision/reference/starter/manifest/instructions/hints/
+      priorTests/baseHash/blueprintHash/acceptanceHash/evalVersion——任何
+      apply/update/rollback 后旧评估即 **Stale**（工具链自动失效）
+- [x] **Verified Checkpoint Policy**：engineering=passed + stability≠失败 +
+      pedagogy≠失败 + **Fingerprint 与当前工作区一致**（TOCTOU 防护：评估后
+      修改→保存拒绝）+ 会话租约有效（CourseDevSession 行级，非 GenerationJob）
+- [x] **Runtime Snapshot 跨 Slice 恢复**：slice 结束持久化完整工作区
+      （reference/starter/manifest/instructions/hints/revisions）+ Agent 消息
+      （含 tool_call_id 链）+ 指纹 + 消耗；resume 时四重兼容校验（任务/
+      蓝图/基线/协议版本）通过即原样恢复——**不重写已写文件、不重放消息**
+- [x] **Frozen AcceptanceContract**（`acceptance.py`）：任务开始冻结
+      （task_spec_hash + 必需行为 + 前序回归）；`update_course_material`
+      的 manifest 变更经契约校验（前序回归不可删除；Agent 可增/改名自己的
+      测试）；契约哈希入 Fingerprint
+- [x] **外键语义修复**：无 Release 的开发 Checkpoint release_id=NULL
+      （移除 generation_id 伪装）；CourseCheckpoint.release_id nullable 迁移
+- [x] **CourseRelease 自动发布**（`service._publish_release`）：全部任务
+      Verified Checkpoint → 链完整性（task_seq 连续 + prev_snapshot_hash 链）
+      → 最终全量 CTest + Demo 运行（真沙箱）→ ready（数据库事务）；失败→
+      session=failed 保留检查点可继续修复；release_id 回写 session
+- [x] **双层预算**：会话总 Token 上限跨 slice 累计（不重置）；发布/恢复/
+      完成任务 ID/发布 Release ID 进入 Status API
+- [x] 验证：后端 **369 全过**（+11 加固单测：Fingerprint 变化/Stale/恢复
+      往返与不兼容拒绝/契约冻结与降级拒绝/保存政策）；前端 **284 全过**；
+      **跨 Slice 恢复 + 自动发布 E2E（真 Docker）通过**：t2 slice1 写文件→
+      暂停（Runtime Snapshot 含文件与消息）→ slice2 恢复（apply 恰一次，
+      不重写）→ 独立评估 passed（含稳定性 2/2）→ checkpoint → submit →
+      **自动发布 ready CourseRelease**（检查点链 + 最终 CTest + instantiate
+      学生项目成功）；E2E B 在契约冻结下通过（manifest 保留前序回归）

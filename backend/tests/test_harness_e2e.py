@@ -78,7 +78,7 @@ class ScriptedToolProvider:
             return {"tool": "update_course_material", "args": {
                 "buildManifest": {"buildTargets": ["engine", "entity_tests"],
                                   "runTargets": [],
-                                  "testNames": ["entity_spawn"]}}}
+                                  "testNames": ["world_update", "entity_spawn"]}}}
         if history[-1] == "update_course_material":
             self.material_set = True
             # 首次修改：故意漏掉 Entity.cpp 注册（受控故障）
@@ -391,3 +391,134 @@ def test_harness_session_control_and_isolation(harness_env):
     # 验证 completed 会话状态收敛
     cancelled = client.post(f"/api/v1/course-dev-sessions/{session_id}/cancel")
     assert cancelled.json()["state"] == "cancelled"
+
+
+# ---------------------------------------------------------------- P8.2.3.1 跨 Slice 恢复 + 自动发布
+
+
+class MultiTaskScriptedProvider:
+    """t2 两 slice 脚本：slice1 写文件（含 Starter 挖空）后暂停；
+    slice2 从 Runtime 恢复→ 评估→ checkpoint→ submit。不重写已写文件。"""
+
+    name = "multi-task"
+
+    def __init__(self):
+        self.calls: list[str] = []
+        self.allow_slice2 = False  # 测试在两次 run 之间置 True
+
+    def chat_with_tools(self, messages, tools):
+        history = self.calls
+        last = history[-1] if history else ""
+        if self.allow_slice2 and last == "apply_file_changes":
+            return self._tool("update_course_material", {
+                "buildManifest": {"buildTargets": ["engine", "entity_tests"],
+                                  "testNames": ["world_update", "entity_spawn"]}})
+        if self.allow_slice2 and last == "update_course_material":
+            return self._tool("evaluate_lesson")
+        if self.allow_slice2 and last == "evaluate_lesson":
+            return self._tool("save_checkpoint")
+        if self.allow_slice2 and last == "save_checkpoint":
+            return self._tool("submit_task")
+        if not history:
+            return self._tool("list_workspace_files")
+        if last == "list_workspace_files":
+            return self._tool("apply_file_changes", {"changes": [
+                {"path": "engine/include/engine/Entity.hpp",
+                 "operation": "create", "content": ENTITY_HPP},
+                {"path": "engine/src/Entity.cpp", "operation": "create",
+                 "content": ENTITY_CPP_REF},
+                {"path": "engine/src/Entity.cpp", "operation": "update",
+                 "content": ENTITY_CPP_STUB, "target": "starter"},
+                {"path": "tests/CMakeLists.txt", "operation": "update",
+                 "baseHash": _hash(TESTS_CMAKE_V1), "content": TESTS_CMAKE_V2},
+                {"path": "tests/test_entity.cpp", "operation": "create",
+                 "content": TEST_ENTITY},
+                {"path": "engine/CMakeLists.txt", "operation": "update",
+                 "baseHash": _hash(ENGINE_CMAKE_V1),
+                 "content": ENGINE_CMAKE_V2}]})
+        if last == "apply_file_changes":
+            return self._done("slice1 文件已写入（预算暂停）")
+        return self._done()
+
+    def _tool(self, name, args=None):
+        self.calls.append(name)
+        return _result(tool_calls=[{
+            "id": f"call_{len(self.calls)}", "name": name,
+            "arguments": args or {}}])
+
+    def _done(self, text="done"):
+        if not text.startswith("slice1"):
+            pass
+        return _result(content=text)
+
+    def chat(self, system, user):
+        raise AssertionError("必须走工具循环")
+
+
+WORLD_STUB = (
+    '#include "engine/World.hpp"' + NL + "namespace engine {" + NL
+    + "inline int world(){ /* TODO: 返回 1 */ return 0; }" + NL + "}" + NL)
+
+
+@pytest.mark.skipif(
+    os.environ.get("PW_RESUME_E2E") != "1" or os.environ.get("PW_SANDBOX_E2E") != "1",
+    reason="跨 Slice 恢复 + 发布 E2E 需 PW_RESUME_E2E=1 + PW_SANDBOX_E2E=1",
+)
+def test_harness_cross_slice_resume_and_publish(harness_env):
+    """E2E（D49 验收 1+4+5）：t2 slice1 写文件→暂停→Runtime Snapshot 持久化→
+    恢复（不重写文件）→评估通过→checkpoint→submit→自动发布 ready
+    CourseRelease→实例化学生项目。"""
+    client, gen_id, _orig, factory = harness_env
+    provider = MultiTaskScriptedProvider()
+    harness_service._provider_factory = lambda: provider
+
+    created = client.post(f"/api/v1/course-dev-sessions?generationId={gen_id}")
+    session_id = created.json()["sessionId"]
+
+    # ---- Slice 1：写文件后脚本 done → 未完成 → paused
+    out1 = client.post(f"/api/v1/course-dev-sessions/{session_id}/run").json()
+    assert out1["state"] == "paused", out1
+    assert provider.calls[-1] == "apply_file_changes"
+
+    # Runtime Snapshot 已持久化（含未完成 t2 工作区与 Agent 消息）
+    with factory() as db:
+        from app.domains.course_generation.harness.models import CourseDevSession
+        from sqlalchemy import select as _sel
+
+        row = db.scalar(_sel(CourseDevSession).where(
+            CourseDevSession.id == _uuid.UUID(session_id)))
+        runtime = (row.workspace or {}).get("runtimeSnapshot")
+        assert runtime and runtime["taskId"] == "t2"
+        assert runtime["workspace"]["referenceFiles"].get("engine/src/Entity.cpp")
+        assert runtime["agentMessages"]
+
+    # ---- Slice 2：恢复 → 不重写文件（apply 只出现一次）→ 评估提交
+    provider.allow_slice2 = True
+    out2 = client.post(f"/api/v1/course-dev-sessions/{session_id}/run").json()
+    assert provider.calls.count("apply_file_changes") == 1, provider.calls
+    assert "submit_task" in provider.calls, provider.calls
+
+    # ---- 自动发布
+    status = client.get(f"/api/v1/course-dev-sessions/{session_id}").json()
+    import json as _json
+    print("STATE:", status["state"], "ERR:", (status.get("error") or "")[:120])
+    for e in out2.get("timeline", []):
+        print("EVT2:", e.get("tool"), "ok=", e.get("ok"), (e.get("summary") or "")[:80], (e.get("error") or "")[:80])
+    print("FEEDBACK:", _json.dumps(status.get("lastFeedback", {}), ensure_ascii=False)[:600])
+    print("PUBLISHFAIL:", status.get("publishFailure"))
+    assert status["state"] == "completed", status.get("error")
+    release_id = status.get("publishedReleaseId")
+    assert release_id, status
+
+    release = client.get(f"/api/v1/course-releases/{release_id}").json()
+    assert release["status"] == "ready"
+    assert release["passedTasks"] == release["totalTasks"]
+    assert "referenceFiles" not in json.dumps(release)
+
+    # ---- 实例化学生项目
+    inst = client.post(f"/api/v1/course-releases/{release_id}/instantiate",
+                       json={"projectTitle": "Harness 课"})
+    assert inst.status_code == 201, inst.text
+    project_id = inst.json()["projectId"]
+    plan = client.get(f"/api/v1/plans/{project_id}").json()
+    assert any(t["taskId"] == "t2" for t in plan["tasks"])

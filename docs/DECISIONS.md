@@ -705,3 +705,18 @@
 - **Resume**：start_session 自动复用兼容 Checkpoint 连续前缀（零 LLM）；slice 预算耗尽 → paused 可续；Working Revision 与 Verified Checkpoint 严格区分。
 
 **验证**：Harness 确定性单测 5（workspace 原子性/overlay 权威基线/revision 历史/材料分离）；真实 Docker E2E B（受控链接故障→Agent 读诊断→修 CMakeLists→真实构建通过→CTest→独立评估 passed→checkpoint 固化→submit）与控制/隔离 E2E（save 未过评估拒绝/rollback/取消）；后端 358 全过 + 前端 284 全过；真实 DeepSeek 工具循环见 PROGRESS 记录。
+
+## D49 · P8.2.3.1 Harness 生产加固：Fingerprint / 冻结契约 / 跨 Slice 恢复 / 自动发布
+
+**日期**：2026-10-13。
+
+**问题**（代码审查确认）：①slice 间未完成工作区与 Agent 消息丢失；②save_checkpoint 只查 engineering（评估与文件版本未绑定）；③stability 失败仍可保存；④Agent 可改 manifest 删除验收；⑤无 Release 时 generation_id 伪装 release_id；⑥session completed ≠ 课程已发布；⑦预算跨 slice 重置。
+
+**决策**：
+
+- **Evaluation Fingerprint**：哈希绑定 taskId/revision/reference/starter/manifest/instructions/hints/priorTests/baseHash/blueprintHash/**acceptanceHash**/evalVersion。apply_file_changes / update_course_material / rollback 成功即失效旧评估（Stale 语义回填 Agent）。save_checkpoint 要求当前指纹 == 最近合格评估指纹（TOCTOU：评估后修改→拒绝保存并要求重评）。
+- **Verified Checkpoint Policy**：engineering=passed ∧ stability≠failed ∧ pedagogy≠failed ∧ 指纹一致 ∧ 会话租约有效（CourseDevSession 行，修正此前误用 GenerationJob 校验）。
+- **Runtime Snapshot**：slice 结束持久化 {workspace 全量, agentMessages(≤40 含 tool_call_id), 指纹, 消耗}；resume 四重兼容（taskId/blueprintHash/baseSnapshotHash/protocolVersion）→ 原样恢复；不兼容明确拒绝不静默覆盖。
+- **Frozen AcceptanceContract**：任务开始冻结（task_spec_hash + requiredBehaviors（语义要求，Evaluator 真实验证裁决）+ priorRegressionTests（确定性检查））；manifest 更新不得删除前序回归；Agent 可实现/命名自己的测试（Agent-Produced Test Implementation）。
+- **发布**：检查点链（task_seq 连续 + prev_snapshot_hash 链）→ 聚合 artifacts/reference_store → 最终全量 CTest + runTargets Demo（真沙箱）→ ready（事务）；失败→session failed + publishFailure（检查点保留可续修）；Release.id 回写 session。
+- **外键**：开发中 checkpoint release_id=NULL；发布后由 Release 持有 artifacts/reference_store（checkpoint 保持溯源）。

@@ -93,6 +93,9 @@ class HarnessController:
     llm_messages: list = None
     last_feedback: dict = None
     last_evaluation: EvaluationReport = None
+    eval_fingerprint: str = ""      # 最近评估绑定的工作区指纹（D49）
+    resumed: bool = False           # 本 slice 是否从 Runtime 恢复
+    acceptance: object = None       # 冻结验收契约（D49）
     timeline: list = None
     no_progress: int = 0
     completed: bool = False
@@ -102,6 +105,93 @@ class HarnessController:
 
     def record_sandbox_run(self) -> None:
         self.sandbox_runs += 1
+
+    # ---------------- Evaluation Fingerprint（D49） ----------------
+
+    def evaluation_fingerprint(self) -> str:
+        """当前工作区与验收契约的精确指纹（评估只能证明该指纹的版本）。"""
+        from app.domains.course_generation.lessons.consistency_validator import (
+            snapshot_hash_of,
+        )
+
+        def _hash(value) -> str:
+            return snapshot_hash_of({"v": json.dumps(
+                value, sort_keys=True, ensure_ascii=False, default=str)})
+
+        payload = json.dumps({
+            "taskId": self.task_spec.get("taskId", ""),
+            "revision": self.workspace.revision,
+            "referenceHash": snapshot_hash_of(self.workspace.reference_files),
+            "starterHash": snapshot_hash_of(self.workspace.starter_overlay),
+            "manifestHash": _hash(self.workspace.manifest),
+            "instructionsHash": _hash(self.workspace.instructions),
+            "hintsHash": _hash(self.workspace.hints),
+            "priorTests": sorted(self.prior_tests or []),
+            "baseHash": snapshot_hash_of(
+                self.workspace.base_snapshot.get("referenceFiles", {})),
+            "blueprintHash": self.blueprint_hash,
+            "acceptanceHash": (self.acceptance.contract_hash()
+                               if self.acceptance else ""),
+            "evaluationVersion": "harness-eval-v1",
+        }, sort_keys=True, ensure_ascii=False)
+        return snapshot_hash_of({"fingerprint": payload})
+
+    def _invalidate_evaluation(self, reason: str) -> None:
+        """任何工作区/材料修改后：旧评估立即失效（Stale）。"""
+        if self.last_evaluation is not None:
+            self.last_evaluation = None
+            self.eval_fingerprint = ""
+            self.last_feedback = {
+                "evaluation": {"engineering": "stale",
+                               "pedagogy": "stale",
+                               "stability": "stale"},
+                "staleReason": reason,
+                "note": "工作区已修改——需重新 evaluate_lesson",
+            }
+
+    def _session_lease_valid(self) -> bool:
+        """会话租约校验（CourseDevSession 行，非 GenerationJob）。"""
+        if self.job_lease is None:
+            return True  # 测试直连（无租约）路径
+        session_row_id, token = self.job_lease
+        from datetime import datetime, timezone
+
+        from app.domains.course_generation.harness.models import CourseDevSession
+
+        try:
+            with self.db_factory() as db:
+                row = db.get(CourseDevSession, session_row_id)
+                if row is None or row.lease_token != token:
+                    return False
+                if row.cancel_requested or row.state not in ("developing", "paused"):
+                    return row.state == "developing" and not row.cancel_requested
+                return True
+        except Exception:
+            return False
+
+    def invalidate_evaluation_after_change(self) -> None:
+        """工具回调：apply/update 成功后由 tools.py 调用。"""
+        self._invalidate_evaluation("工作区文件/材料修改")
+
+    def init_acceptance_contract(self, task_spec: dict,
+                                 prior_tests: list[str]) -> None:
+        """任务开始时冻结验收契约（Agent 不可修改）。"""
+        from app.domains.course_generation.harness.acceptance import (
+            build_acceptance_contract,
+        )
+
+        self.acceptance = build_acceptance_contract(task_spec, prior_tests)
+
+    def validate_manifest_update(self, new_manifest: dict) -> list[str]:
+        """update_course_material 的 manifest 变更不得降低冻结契约。"""
+        if self.acceptance is None:
+            return []
+        from app.domains.course_generation.harness.acceptance import (
+            validate_manifest_against_contract,
+        )
+
+        return validate_manifest_against_contract(
+            self.acceptance, new_manifest, self.workspace.manifest)
 
     def evaluate_current(self) -> dict:
         material = self.workspace.material_dict()
@@ -133,15 +223,35 @@ class HarnessController:
                 material, self.workspace.base_snapshot.get("referenceFiles", {}),
                 self.prior_tests or [], self.is_final, stability_runs=2)
         self.last_feedback = self.last_evaluation.to_feedback()
+        # Fingerprint 绑定：本次评估只证明这个精确版本（D49）
+        self.eval_fingerprint = self.evaluation_fingerprint()
+        self.last_feedback["fingerprint"] = self.eval_fingerprint
         return {"independent": True, **self.last_feedback}
 
     def save_checkpoint(self) -> dict:
+        # Verified Checkpoint Policy（D49）：engineering + stability + pedagogy
+        # 确定性部分全部通过 + Fingerprint 与当前工作区一致 + Lease 有效
         if (self.last_evaluation is None
                 or self.last_evaluation.engineering != "passed"):
             return {"ok": False,
                     "error": "拒绝保存：独立评估未通过（engineering != passed）。"
                              "先 evaluate_lesson 并修复失败。"}
-        release_ref = self.release_id or self.generation_id  # 无 release 时挂 generation（可追溯）
+        if self.last_evaluation.stability not in ("passed", "not-evaluated"):
+            return {"ok": False,
+                    "error": "拒绝保存：实验稳定性未通过"
+                             f"（{self.last_evaluation.stability}）——重复沙箱结果不稳定"}
+        if self.last_evaluation.pedagogy == "failed":
+            return {"ok": False,
+                    "error": "拒绝保存：教学约束未通过（starter 预期失败等）"}
+        current_fp = self.evaluation_fingerprint()
+        if self.eval_fingerprint and current_fp != self.eval_fingerprint:
+            return {"ok": False,
+                    "error": "拒绝保存：评估后工作区已修改（Fingerprint 不匹配）——"
+                             "必须重新 evaluate_lesson。"}
+        if not self._session_lease_valid():
+            return {"ok": False,
+                    "error": "拒绝保存：会话租约已失效（被接管/过期），本 worker 停止写入"}
+        release_ref = self.release_id  # 开发中允许 NULL（D49 外键语义修复）
         with self.db_factory() as db:
             _persist_checkpoint(
                 db, release_ref, self.generation_id, self.task_seq,
@@ -170,6 +280,7 @@ class HarnessController:
         })
         self.workspace.revision = 0
         self.no_progress = 0
+        self._invalidate_evaluation("回滚到已验证基线")
         return {"ok": True, "rolledBackTo": "last-verified-checkpoint",
                 "revision": 0}
 
@@ -185,6 +296,31 @@ class HarnessController:
                 "note": "任务通过独立验收并已固化；本 slice 结束"}
 
     # ---------------- Agent 循环（真实 function calling） ----------------
+
+    def load_runtime(self, snapshot: dict) -> bool:
+        """从 Runtime Snapshot 恢复未完成工作区与 Agent 上下文（D49）。
+
+        兼容校验：任务/蓝图哈希/基线哈希/协议版本任一不匹配即拒绝恢复
+        （返回 False——调用方从头初始化，不静默覆盖已保存工作）。
+        """
+        if not snapshot or snapshot.get("protocolVersion") != "harness-runtime-v1":
+            return False
+        if snapshot.get("taskId") != self.task_spec.get("taskId", ""):
+            return False
+        if snapshot.get("blueprintHash") != self.blueprint_hash:
+            return False
+        if snapshot.get("baseSnapshotHash") != self._base_hash():
+            return False
+        ws = snapshot.get("workspace") or {}
+        if not ws.get("referenceFiles") and not ws.get("starterOverlay"):
+            return False
+        self.workspace = CourseWorkspace(ws)
+        self.llm_messages = list(snapshot.get("agentMessages") or [])
+        self.last_feedback = dict(snapshot.get("lastEvaluation") or {})
+        self.eval_fingerprint = snapshot.get("lastFingerprint") or ""
+        self.checkpoint_saved = bool(snapshot.get("checkpointSaved"))
+        self.resumed = True
+        return True
 
     def run(self) -> dict:
         registry = build_harness_tools(self.workspace, self)
@@ -334,7 +470,30 @@ class HarnessController:
             "timeline": self.timeline,
             "lastFeedback": self.last_feedback or {},
             "messages": self.llm_messages,
+            # Runtime Snapshot（D49）：未完成任务的完整恢复载荷
+            "runtimeSnapshot": {
+                "taskId": self.task_spec.get("taskId", ""),
+                "blueprintHash": self.blueprint_hash,
+                "baseSnapshotHash": self._base_hash(),
+                "workspaceRevision": self.workspace.revision,
+                "workspace": self.workspace.to_dict(),
+                "agentMessages": (self.llm_messages or [])[-40:],
+                "lastEvaluation": (self.last_feedback or {}),
+                "lastFingerprint": self.eval_fingerprint,
+                "consumedTokens": self.tokens,
+                "sandboxRuns": self.sandbox_runs,
+                "checkpointSaved": self.checkpoint_saved,
+                "protocolVersion": "harness-runtime-v1",
+            },
         }
+
+    def _base_hash(self) -> str:
+        from app.domains.course_generation.lessons.consistency_validator import (
+            snapshot_hash_of,
+        )
+
+        return snapshot_hash_of(
+            self.workspace.base_snapshot.get("referenceFiles", {}))
 
 
 def _args_summary(args: dict) -> dict:

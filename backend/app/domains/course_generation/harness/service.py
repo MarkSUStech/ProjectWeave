@@ -154,6 +154,9 @@ def session_status(db, session_id) -> dict:
         "budget": row.budget, "lastFeedback": row.last_feedback,
         "timeline": (row.timeline or [])[-40:],
         "error": row.error,
+        "completedTaskIds": (row.workspace or {}).get("completedTaskIds") or [],
+        "publishedReleaseId": (row.workspace or {}).get("publishedReleaseId"),
+        "publishFailure": (row.workspace or {}).get("publishFailure"),
     }
 
 
@@ -224,6 +227,20 @@ def run_slice(session_id) -> dict:
         row.state = "developing"
         db.commit()
 
+    # D49 双层预算：会话总 Token 上限（跨 slice 累计不重置）
+    with _db() as db:
+        row = db.get(CourseDevSession, session_id)
+        usage = row.token_usage or {}
+        budget = row.budget or {}
+        if (usage.get("totalTokens") or 0) >= budget.get("totalTokens", 2_000_000):
+            row.state = "paused"
+            row.error = "会话总 Token 预算耗尽（提高预算后可 resume）"
+            db.commit()
+            return {"state": "paused", "completed": False, "rounds": 0,
+                    "toolCalls": 0, "tokens": 0, "sandboxRuns": 0,
+                    "workspaceRevision": row.workspace_revision,
+                    "timeline": []}
+
     result = controller.run()
 
     with _db() as db:
@@ -236,6 +253,9 @@ def run_slice(session_id) -> dict:
             row.state = "paused"
             row.error = "slice 预算耗尽（可 resume 继续）"
         row.workspace = _merge_workspace(row, result)
+        # Runtime Snapshot 持久化（未完成任务可原样恢复；完成时清除）
+        row.workspace["runtimeSnapshot"] = (
+            result.get("runtimeSnapshot") if not result["completed"] else None)
         row.workspace_revision = result["workspaceRevision"]
         row.tool_call_count += result["toolCalls"]
         row.evaluation_count += 1 if result.get("lastFeedback") else 0
@@ -312,7 +332,7 @@ def _build_controller(row: CourseDevSession, lease: tuple) -> HarnessController:
     milestones = {m["milestoneId"]: m["title"]
                   for m in ws_data.get("milestones") or []}
 
-    return HarnessController(
+    controller = HarnessController(
         db_factory=_db, session_id=row.id, workspace=workspace,
         provider=_provider(), task_spec=task_spec,
         milestone_title=milestones.get(task_spec.get("milestoneId", ""), ""),
@@ -323,6 +343,13 @@ def _build_controller(row: CourseDevSession, lease: tuple) -> HarnessController:
         job_lease=lease,
         timeline=[],
     )
+    # D49：冻结验收契约（任务开始时固化；Resume 后保持同一契约）
+    controller.init_acceptance_contract(task_spec, prior_tests)
+    # D49 Resume：同任务/同蓝图/同基线的 Runtime Snapshot → 原样恢复
+    runtime = (row.workspace or {}).get("runtimeSnapshot")
+    resumed = bool(runtime) and controller.load_runtime(runtime)
+    row.workspace = {**(row.workspace or {}), "runtimeResumed": resumed}
+    return controller
 
 
 def _merge_workspace(row: CourseDevSession, result: dict) -> dict:
@@ -342,11 +369,99 @@ def _advance_or_complete(db, row: CourseDevSession, result: dict) -> None:
     done.add(row.current_task_id)
     ws["completedTaskIds"] = sorted(done)
     if len(done) >= len(order):
-        row.state = "completed"
+        # D49：全部任务完成 → Final Evaluation + CourseRelease 自动发布
+        publish = _publish_release(db, row)
+        if publish.get("ok"):
+            row.state = "completed"
+            row.release_id = _uuid.UUID(publish["releaseId"])
+            row.error = None
+            ws["publishedReleaseId"] = publish["releaseId"]
+        else:
+            # 发布失败：不进 completed——保留检查点，可继续修复重发
+            row.state = "failed"
+            row.error = "最终发布失败：" + publish.get("error", "")[:400]
+            ws["publishFailure"] = publish.get("error", "")[:600]
     else:
         row.state = "paused"   # 等待下一 slice（自动或手动 resume）
         row.error = None
     row.workspace = ws
+
+
+def _publish_release(db, row: CourseDevSession) -> dict:
+    """从 Verified Checkpoints 发布 ready CourseRelease（复用既有模型）。
+
+    检查点链完整 → 聚合 artifacts/reference_store → 最终集成真实 CTest
+    + Demo 运行 → 全部通过才 ready（数据库事务提交）。
+    """
+    from app.domains.course_generation.models import CourseGeneration, CourseRelease
+    from app.domains.course_generation.lessons.change_set import CHANGESET_PROTOCOL
+    from app.domains.course_generation.lessons.lesson_publisher import (
+        load_compatible_checkpoints,
+    )
+    from app.domains.course_generation.verification.course_verifier import (
+        run_cmake_operation,
+    )
+
+    ws = row.workspace or {}
+    task_order = ws.get("taskOrder") or []
+    blueprint_hash = _harness_blueprint_hash(ws)
+    checkpoints = load_compatible_checkpoints(
+        row.generation_id, blueprint_hash, CHANGESET_PROTOCOL,
+        "projectweave-sandbox-cpp:clang15-bookworm", "")
+    missing = [tid for tid in task_order if tid not in checkpoints]
+    if missing:
+        return {"ok": False, "error": f"缺少 Verified Checkpoint：{missing}"}
+
+    ordered = [checkpoints[tid] for tid in task_order]
+    for i, cp in enumerate(ordered):
+        if cp["task_seq"] != i:
+            return {"ok": False,
+                    "error": f"检查点序号不连续：{cp['task_id']}(seq={cp['task_seq']})"}
+        if (i > 0 and cp.get("prev_snapshot_hash")
+                and cp["prev_snapshot_hash"] != ordered[i - 1].get("snapshot_hash")):
+            return {"ok": False, "error": f"快照链断裂：{cp['task_id']}"}
+
+    final_cp = ordered[-1]
+    final_files = final_cp["snapshot_files"]
+    manifest = (final_cp.get("artifact") or {}).get("buildManifest") or {}
+    run_targets = manifest.get("runTargets") or []
+
+    full = run_cmake_operation(final_files, mode="test")
+    if not full.ok:
+        return {"ok": False,
+                "error": "最终全量 CTest 未通过：" + "; ".join(
+                    d.get("message", "")[:120] for d in (full.diagnostics or [])[:3])}
+    for target in run_targets:
+        demo = run_cmake_operation(final_files, mode="run",
+                                   cmake_action="run", target_name=target)
+        if not demo.ok:
+            return {"ok": False, "error": f"最终演示目标运行失败：{target}"}
+
+    gen = db.get(CourseGeneration, row.generation_id)
+    version = 1 + len(list(db.scalars(select(CourseRelease.id).where(
+        CourseRelease.generation_id == row.generation_id))))
+    release = CourseRelease(
+        generation_id=row.generation_id,
+        release_version=version,
+        status="ready",
+        language="cpp",
+        course_title=(gen.blueprint.get("project") or {}).get("title", "")
+        if gen and gen.blueprint else "",
+        progress=100,
+        blueprint_snapshot=gen.blueprint if gen else {},
+        artifacts=[cp["artifact"] for cp in ordered],
+        reference_store={cp["task_id"]: cp["reference_delta"] for cp in ordered},
+        verification_report={
+            "passed": len(ordered), "total": len(ordered),
+            "finalIntegration": {"status": "passed", "source": "harness-publish"},
+            "harness": {"sessionId": str(row.id), "tasks": task_order},
+        },
+        ready_at=utcnow(),
+    )
+    db.add(release)
+    db.commit()
+    db.refresh(release)
+    return {"ok": True, "releaseId": str(release.id)}
 
 
 def _harness_blueprint_hash(ws_data: dict) -> str:

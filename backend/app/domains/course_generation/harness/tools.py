@@ -92,7 +92,8 @@ def build_harness_tools(workspace, harness) -> ToolRegistry:
                         "hints": {"type": "array"},
                     }},
         handler=lambda ctx, buildManifest=None, instructions=None, hints=None:
-            _update_material(workspace, buildManifest, instructions, hints),
+            _update_material(workspace, buildManifest, instructions, hints,
+                             harness=harness),
         max_result_chars=2000,
     ))
 
@@ -230,14 +231,23 @@ def _apply_changes(workspace, raw_changes):
         return {"ok": False, "conflicts": [{
             "errorCode": "schema-error", "filePath": "<patch>",
             "expected": "合法 FileChange", "actual": str(exc)[:200]}]}
-    return workspace.apply_changes(changes)
+    result = workspace.apply_changes(changes)
+    if result.get("ok"):
+        harness.invalidate_evaluation_after_change()  # D49：修改即失效
+    return result
 
 
-def _update_material(workspace, manifest, instructions, hints):
+def _update_material(workspace, manifest, instructions, hints, harness=None):
     manifest = manifest if isinstance(manifest, dict) else None
     instructions = instructions if isinstance(instructions, dict) else None
     hints = hints if isinstance(hints, list) else None
     if manifest is None and instructions is None and hints is None:
         return {"ok": False, "error": "至少提供一项材料更新"}
+    if manifest is not None and harness is not None:
+        violations = harness.validate_manifest_update(manifest)
+        if violations:
+            return {"ok": False,
+                    "error": "冻结契约拒绝 manifest 变更：" + "; ".join(violations[:3])}
     workspace.update_material(manifest=manifest, instructions=instructions, hints=hints)
+    harness.invalidate_evaluation_after_change()  # D49
     return {"ok": True, "revision": workspace.revision}
