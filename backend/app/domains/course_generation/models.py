@@ -141,6 +141,9 @@ class CourseCheckpoint(Base):
     # 已验证累积参考工程（源+测试）与测试注册表（受保护，不下发）
     snapshot_files: Mapped[dict] = mapped_column(JSONType, default=dict)
     snapshot_hash: Mapped[str] = mapped_column(String(32), default="")
+    # P8.2.2：任务规格哈希（蓝图变更/拆分后默认不复用）与前序快照链
+    task_spec_hash: Mapped[str] = mapped_column(String(32), default="")
+    prev_snapshot_hash: Mapped[str] = mapped_column(String(32), default="")
     test_registry: Mapped[list] = mapped_column(JSONType, default=list)
     artifact: Mapped[dict] = mapped_column(JSONType, default=dict)        # 公开材料
     reference_delta: Mapped[list] = mapped_column(JSONType, default=list)  # 受保护参考实现

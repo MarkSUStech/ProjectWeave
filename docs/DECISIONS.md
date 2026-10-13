@@ -673,3 +673,20 @@
 - **度量**：artifact.repairs.changedFiles 记录真实修改文件（不再空占位）；release.verificationReport.diagnostics 记录 reusedTasks/llmSavedByReuse；checkpoint.diagnostics 记录每任务修复轮/LLM 调用/Token/沙箱次数/一次通过。
 
 **验证**：后端 340 全过（+19 单测：applier 原子性/冲突/保护删除、context 相关性与预算、consistency 六类、repair 分类与预算、changeset schema）；Mock ChangeSet 学生旅程 E2E 与**断点恢复 E2E（验收 D）**全过——恢复时 provider 调用序列恰为 ["build:t3"]（t1/t2 零 LLM）；前端 284 全过。
+
+## D47 · P8.2.2 可靠 C++ 课程生成：任务拆分 + 严格哈希 + 收敛熔断 + 原子租约
+
+**日期**：2026-10-13。
+
+**背景**：P8.2.1 真实 12 轮显示 t1/t2 稳定而 t3（集成+Demo）反复失败——单任务工程复杂度过载、修复不收敛、update 哈希宽容静默覆盖、Job lease 未原子校验。
+
+**决策**：
+
+- **复杂度驱动的任务拆分**：`task_complexity.py` 确定性计分（集成+入口耦合 30 分、终点全量 15 分、交付物/验收/模块/目标测试各计分）≥60 判 split；`task_refinement.py` 保守拆分终点集成任务为"模块集成"+"应用入口与最终验收"（交付物按可分性分类；不可分/无独立目标即保留并记原因）。拆分只写 release 私有蓝图快照；蓝图哈希入 Checkpoint 兼容性 → 旧检查点默认不复用。
+- **严格哈希 + 服务端权威回填**：update baseHash 缺失/不匹配一律结构化拒绝；两类确定性回填不烧 LLM——reference/test 的纯哈希类冲突按服务端当前内容回填重试；**Starter Overlay Base** 定义为两阶段快照关系（starter 变更基线 = 本轮合成参考版，服务端回填），LLM 不再抄哈希。
+- **修复收敛协议**：错误签名集合跟踪（resolved/new/unchanged）；连续两轮无净改善 → 熔断转为重新生成当前任务（已验证 Checkpoint 不动）；确定性修复优先（manifest 测试名一一对应对齐）；空补丁视为失败。
+- **Job 原子租约**：事务 + `FOR UPDATE` 行锁抢占（PG）/SQLite 单写者串行；lease_token 唯一绑定 worker；每任务续租；Checkpoint 提交与 ready 发布前 `_lease_valid` 校验（旧 worker 失效写入被拒、数据不损坏）；重启 → interrupted 等待显式 resume。
+- **Checkpoint 兼容链**：blueprint_hash + task_spec_hash + prev_snapshot_hash 链验证 + 协议版本 + 镜像 + 源 commit；链断即不复用。
+- **模型路由**：`COURSE_{GENERATION,REASONING,REPAIR}_MODEL` + 每任务 LLM/Token/耗时/沙箱上限；`_routed_provider` 仅对真实 DeepSeek 生效（Mock 永不路由，测试零费用）。
+
+**验证**：后端 352 全过（含双线程并发抢占恰一成功、租约过期接管、stale writer 拒绝、拆分 DAG 过验证器、严格哈希拒绝+回填、Starter Overlay Base）；Mock 四任务全链 + 断点恢复 E2E 全过；真实 DeepSeek 结果见 PROGRESS 运行记录。

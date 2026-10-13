@@ -726,3 +726,45 @@
 但 5 轮修复预算内 t3 尚未全部收敛——**验收 A/B/C 的三任务连续 ready 未
 达成**（Mock 全链与验收 D/E 已过）。下一步：deepseek-reasoner 或 t3 拆分
 为两个较小任务（引擎侧集成 + app/demo）。
+
+### P8.2.2 可靠 C++ 课程生成与生产加固（D47）
+
+- [x] **GenerationTrace**：repairs 记录真实 changedFiles/outcome
+      （deterministic-fix/circuit-break/regenerated）+ checkpoint.diagnostics
+      （llmCalls/tokensUsed/sandboxRuns/firstAttemptPassed/deterministicFixes/trace）
+- [x] **Task Complexity Analyzer**（`generation/task_complexity.py`）：确定性
+      计分（交付物数/集成+入口耦合/终点全量验收/模块跨度/新目标+新测试），
+      可解释 reasons + confidence；空规格返回 unknown 不伪装
+- [x] **任务自动拆分**（`generation/task_refinement.py`）：保守确定性拆分
+      高复杂度终点集成任务（集成侧 + 入口侧，按交付物可分性判定；分不动
+      不拆）；只作用于 release 私有蓝图快照（gen 蓝图与既有 Checkpoint
+      不触碰，蓝图哈希变化默认不复用旧检查点）；DAG 重挂后继
+- [x] **严格 Hash 语义恢复**：update baseHash 缺失/不匹配一律拒绝
+      （结构化冲突，无静默覆盖）+ **服务端权威回填**两类确定性修复
+      （reference/test 哈希类冲突回填重试；Starter Overlay Base 按合成
+      参考版回填——两阶段快照关系不依赖 LLM 抄哈希）
+- [x] **Repair 收敛**：进度跟踪（错误签名集合对比）；连续两轮无净改善
+      → 熔断改重新生成策略（已完成任务不受影响）；确定性修复分流
+      （manifest 测试名保守对齐：一一对应才修正）；空补丁拒绝
+- [x] **Model Routing**：COURSE_GENERATION/REASONING/REPAIR_MODEL +
+      每任务 LLM/Token/耗时/沙箱上限配置；Mock provider 永不路由收费模型
+- [x] **Job 原子 Lease**：事务 + FOR UPDATE 行锁抢占（SQLite 单写者天然
+      串行）；唯一 lease_token；每任务续租；Checkpoint 提交与 ready 发布
+      前验证租约（旧 worker 失效写入被拒）；重启 → interrupted
+- [x] **Checkpoint 兼容加强**：task_spec_hash + prev_snapshot_hash 链验证
+      （前序快照链不匹配即断链不复用）+ 迁移 7edb9eb11b76
+- [x] **前端**：任务拆分徽标（原 N → 细化 M + 拆分原因）
+- [x] 验证：后端 **352 全过**（+12：复杂度/拆分/租约原子性与并发竞态/
+      熔断签名/确定性对齐/Starter Overlay Base）；前端 **284 全过**；
+      **Mock 四任务 E2E（t3 自动拆分为 t3-a/t3-b）+ 断点恢复 E2E 全过**
+      （恢复仅调用 build:t3-b；学生旅程四任务含回归全过）
+
+**P8.2.2 真实 DeepSeek 运行记录（5 轮，如实）**：架构升级后逐轮失败点：
+①t2 starter 预期失败未覆盖 → ②base-hash-mismatch（→ 系统化修复：Starter
+Overlay Base 服务端回填）→ ③t3-b 链接错误（→ 系统化修复：验证修复上下文
+纳入本任务全部源码/头文件）→ ④t2 参考实现断言失败 → ⑤t1 测试空断言。
+**3/3 连续成功目标未达成（本会话 0/5）**；t1/t2/t3-a 在多轮中分别单独通过
+（含真实 CMake/CTest 八步验证与检查点固化），但整课程 ready 的连续稳定性
+仍不足——deepseek-chat 在受约束增量协议下的输出方差是主要瓶颈。
+已按规范如实记录；下一阶段建议：启用 COURSE_REASONING_MODEL 路由到
+推理模型做 A/B（配置已就绪，未在本会话启用以控费用）。

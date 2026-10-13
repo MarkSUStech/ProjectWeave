@@ -46,21 +46,30 @@ def test_apply_create_update_delete():
     assert base == {"a.txt": "A", "b.txt": "B"}  # 原子性：不改基线
 
 
-def test_apply_update_hash_mismatch_is_warning_not_conflict():
-    """P8.2.1：单写者场景 update 哈希不匹配降级为警告（可观测），不阻塞。"""
+def test_apply_update_hash_strict_rejection_and_programmatic_repair():
+    """P8.2.2：错误/缺失 baseHash 一律拒绝；程序化回填后可确定性通过。"""
+    from app.domains.course_generation.lessons.change_applier import (
+        hash_only_conflicts,
+        repair_base_hashes,
+    )
+
     base = {"a.txt": "A"}
-    result = apply_file_changes(base, [
-        _change("a.txt", "update", "A2", base_hash="wrong"),
-    ])
-    assert result.ok
-    assert result.files == {"a.txt": "A2"}
-    assert result.applied[0]["baseHashWarning"].startswith("baseHash=wrong")
-    # 原子性仍由真冲突保障（create-exists 等）
-    result = apply_file_changes(base, [
-        _change("c.txt", "create", "C"),
-        _change("c.txt", "create", "D"),
-    ])
-    assert not result.ok and result.files == base
+    wrong = apply_file_changes(base, [_change("a.txt", "update", "A2", base_hash="wrong")])
+    assert not wrong.ok
+    assert wrong.conflicts[0]["errorCode"] == "base-hash-mismatch"
+    missing = apply_file_changes(base, [_change("a.txt", "update", "A2")])
+    assert not missing.ok
+    assert missing.conflicts[0]["errorCode"] == "missing-base-hash"
+    # 基线未被修改（无静默覆盖）
+    assert base == {"a.txt": "A"}
+
+    # 程序化回填：哈希类冲突 → 服务端重写 baseHash → 应用成功（零 LLM）
+    assert hash_only_conflicts(wrong.conflicts)
+    repaired = repair_base_hashes(base, [_change("a.txt", "update", "A2", base_hash="wrong")])
+    ok = apply_file_changes(base, repaired)
+    assert ok.ok and ok.files == {"a.txt": "A2"}
+    # 非哈希冲突不可程序化回填
+    assert not hash_only_conflicts([{"errorCode": "create-exists"}])
 
 
 def test_apply_rejects_path_traversal_and_duplicates():
@@ -305,3 +314,14 @@ def test_changeset_schema_validates_and_rejects():
             "referenceChanges": [{"path": "a/../b", "operation": "create", "content": "x"}],
             "buildManifest": {},
         })
+
+
+def test_starter_overlay_base_server_authoritative():
+    """starter update 哈希由服务端按参考版回填（两阶段快照关系，D47）。"""
+    cs = _changeset(
+        reference=[_change("engine/src/World.cpp", "create", "impl")],
+        starter=[_change("engine/src/World.cpp", "update", "// TODO", base_hash="wrong-hash")],
+    )
+    reference, starter = compose_project_files({}, cs)
+    assert reference.ok and starter.ok
+    assert starter.files["engine/src/World.cpp"] == "// TODO"

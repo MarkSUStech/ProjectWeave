@@ -524,6 +524,21 @@ export default function CourseGeneratePage() {
               </div>
             </div>
           )}
+          {(() => {
+            const refinement = (release.verificationReport as Record<string, unknown>)?.taskRefinement as
+              { refined?: boolean; originalTaskCount?: number; taskCount?: number; mappings?: Array<{ originalTaskId: string; newTaskIds: string[]; reason: string }> } | undefined
+            if (!refinement?.refined) return null
+            return (
+              <div className="mb-2 rounded border border-edge-soft bg-panel px-2.5 py-2 text-[11px] text-ink-dim">
+                任务规划：原 {refinement.originalTaskCount} 个任务 → 细化后 {refinement.taskCount} 个
+                {refinement.mappings?.map(m => (
+                  <div key={m.originalTaskId} className="text-ink-faint">
+                    · {m.originalTaskId} 拆分为 {m.newTaskIds.join(' + ')}（{m.reason.slice(0, 60)}）
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
           {release.status === 'ready' && (() => {
             const diagnostics = (release.verificationReport as Record<string, unknown>)?.diagnostics as
               { reusedTasks?: string[]; llmSavedByReuse?: number } | undefined

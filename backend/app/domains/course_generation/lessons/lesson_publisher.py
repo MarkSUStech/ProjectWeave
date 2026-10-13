@@ -83,6 +83,31 @@ def _provider():
     return get_provider()
 
 
+def _routed_provider(base_provider, role: str):
+    """P8.2.2 模型路由：按角色返回配置的模型实例（空配置 = 基础 provider）。
+
+    仅当注入的是真实 DeepSeek provider 且配置了非默认模型时才构造新实例；
+    Mock/测试 provider 原样返回（测试永不触发收费模型）。
+    """
+    from app.core.config import settings
+
+    model_map = {
+        "generation": settings.course_generation_model,
+        "reasoning": settings.course_reasoning_model,
+        "repair": settings.course_repair_model,
+    }
+    model = model_map.get(role, "")
+    if not model or getattr(base_provider, "name", "") == "mock":
+        return base_provider
+    try:
+        from app.ai.provider import DeepSeekProvider
+
+        routed = DeepSeekProvider(model=model)
+        return routed
+    except Exception:
+        return base_provider  # 路由失败退回默认（不阻塞生成）
+
+
 # ---------------------------------------------------------------- 创建/查询
 
 
@@ -97,6 +122,21 @@ def build_lessons(db: Session, generation_id) -> CourseRelease:
     if not profile["verified"]:
         # 提前拒绝：不做任何 LLM 生成/修复尝试，不产生注定失败的 release
         raise ReleaseError(unsupported_profile_message(profile), 422)
+
+    # P8.2.2 任务拆分：高复杂度终点集成任务确定性细化——只作用于本 release
+    # 的私有蓝图快照（gen.blueprint 与既有 Checkpoint/Release 不被触碰）。
+    blueprint_for_release = gen.blueprint
+    refinement_summary = {"refined": False, "mappings": [], "complexity": []}
+    if language == "cpp":
+        from app.domains.course_generation.generation.task_refinement import (
+            refine_blueprint,
+        )
+
+        refinement = refine_blueprint(gen.blueprint)
+        if refinement.refined:
+            blueprint_for_release = refinement.blueprint
+            refinement_summary = refinement.summary()
+
     version = 1 + len(list(db.scalars(
         select(CourseRelease.id).where(CourseRelease.generation_id == gen.id)
     )))
@@ -106,7 +146,8 @@ def build_lessons(db: Session, generation_id) -> CourseRelease:
         status="generating",
         language=language,
         course_title=(gen.blueprint.get("project") or {}).get("title", ""),
-        blueprint_snapshot=gen.blueprint,
+        blueprint_snapshot=blueprint_for_release,
+        verification_report={"taskRefinement": refinement_summary},
     )
     db.add(release)
     db.commit()
@@ -160,32 +201,98 @@ def recover_stale_releases(db: Session) -> int:
 # ---------------------------------------------------------------- Generation Job（P8.2.1）
 
 
-def _start_job(release_id, generation_id):
-    """创建/复用该 release 的 Job 行（lease 防多 worker 并发写）。"""
+JOB_LEASE_SECONDS = 900  # 单任务课程生成远小于此；每任务开始时续租
+
+
+def _aware(dt):
+    """SQLite 读回 naive 时间统一补 UTC（PG 返回 aware 原样）。"""
+    import datetime as _dt
+
+    return dt if dt is None or dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
+
+
+def _claim_job(release_id, generation_id) -> tuple | None:
+    """原子抢占 Job（P8.2.2）：条件 UPDATE，同一 release 同时至多一个 worker。
+
+    返回 (job_id, lease_token)；已有活跃 worker（running 且租约未过期）→ None。
+    """
     import uuid as _uuid
+    from datetime import timedelta
+
+    from sqlalchemy import update as _update
 
     from app.domains.course_generation.models import GenerationJob
 
     token = _uuid.uuid4().hex
+    now = utcnow()
     with _session() as db:
         existing = db.scalar(select(GenerationJob).where(
             GenerationJob.release_id == release_id))
-        if existing is not None:
-            existing.status = "running"
-            existing.lease_token = token
-            existing.error = None
-            existing.completed_task_ids = []
-            existing.reused_task_ids = []
-            existing.retry_count = (existing.retry_count or 0) + 1
+        if existing is None:
+            job = GenerationJob(
+                release_id=release_id, generation_id=generation_id,
+                status="running", lease_token=token,
+                lease_expires_at=now + timedelta(seconds=JOB_LEASE_SECONDS),
+                retry_count=1,
+            )
+            db.add(job)
             db.commit()
-            return existing.id
-        job = GenerationJob(
-            release_id=release_id, generation_id=generation_id,
-            status="running", lease_token=token,
-        )
-        db.add(job)
+            return job.id, token
+        # 原子抢占（事务 + 行锁）：非 running，或租约已过期（旧 worker 失联）。
+        # PG 用 FOR UPDATE 行锁；SQLite 单写者天然串行——判定在 Python 侧
+        # 完成（避免 naive/aware 时间在 SQL 端比较的方言差异）。
+        locked = db.get(GenerationJob, existing.id, with_for_update=True)
+        if locked is None:
+            return None
+        lease_expired = (_aware(locked.lease_expires_at) is None
+                         or _aware(locked.lease_expires_at) < now)
+        if locked.status == "running" and not lease_expired:
+            db.rollback()
+            return None  # 另一 worker 持有有效租约
+        locked.status = "running"
+        locked.lease_token = token
+        locked.error = None
+        locked.lease_expires_at = now + timedelta(seconds=JOB_LEASE_SECONDS)
+        locked.retry_count = (locked.retry_count or 0) + 1
+        locked.completed_task_ids = []
+        locked.reused_task_ids = []
         db.commit()
-        return job.id
+        return locked.id, token
+
+
+def _lease_renew(job_lease: tuple) -> None:
+    """续租（每任务开始时）。"""
+    from datetime import timedelta
+
+    from sqlalchemy import update as _update
+
+    from app.domains.course_generation.models import GenerationJob
+
+    job_id, token = job_lease
+    try:
+        with _session() as db:
+            db.execute(
+                _update(GenerationJob).where(GenerationJob.id == job_id)
+                .where(GenerationJob.lease_token == token)
+                .values(lease_expires_at=utcnow() + timedelta(seconds=JOB_LEASE_SECONDS)))
+            db.commit()
+    except Exception:
+        pass
+
+
+def _lease_valid(job_lease: tuple) -> bool:
+    """当前 worker 的租约是否仍有效（提交 Checkpoint/ready 前必须校验）。"""
+    from app.domains.course_generation.models import GenerationJob
+
+    if job_lease is None:
+        return True  # 旧路径（无 lease）不阻塞——兼容测试
+    job_id, token = job_lease
+    with _session() as db:
+        row = db.get(GenerationJob, job_id)
+        if row is None or row.lease_token != token or row.status != "running":
+            return False
+        expires = _aware(row.lease_expires_at)
+        return expires is None or expires > utcnow()
 
 
 def _job_update(job_id, **fields) -> None:
@@ -394,7 +501,8 @@ def _persist_checkpoint(db, release_id, generation_id, task_seq: int, task_id: s
                         blueprint_hash: str, protocol: str, sandbox_image: str,
                         source_commit: str, reference_files: dict,
                         test_registry: list, artifact: dict, reference_delta: list,
-                        evidence: list, diagnostics: dict) -> None:
+                        evidence: list, diagnostics: dict,
+                        task_spec_hash: str = "", prev_snapshot_hash: str = "") -> None:
     from app.domains.course_generation.models import CourseCheckpoint
     from app.domains.course_generation.lessons.consistency_validator import (
         snapshot_hash_of,
@@ -407,6 +515,7 @@ def _persist_checkpoint(db, release_id, generation_id, task_seq: int, task_id: s
         sandbox_image=sandbox_image, source_commit=source_commit,
         snapshot_files=reference_files,
         snapshot_hash=snapshot_hash_of(reference_files),
+        task_spec_hash=task_spec_hash, prev_snapshot_hash=prev_snapshot_hash,
         test_registry=list(test_registry),
         artifact=artifact, reference_delta=reference_delta,
         verification_evidence=evidence, diagnostics=diagnostics,
@@ -434,6 +543,9 @@ def load_compatible_checkpoints(generation_id, blueprint_hash: str,
                     and (row.source_commit or "") == source_commit
                     and row.task_id not in picked):
                 picked[row.task_id] = {
+                    "task_spec_hash": row.task_spec_hash or "",
+                    "prev_snapshot_hash": row.prev_snapshot_hash or "",
+                    "snapshot_hash": row.snapshot_hash or "",
                     "task_seq": row.task_seq,
                     "task_id": row.task_id,
                     "snapshot_files": dict(row.snapshot_files or {}),
@@ -444,14 +556,19 @@ def load_compatible_checkpoints(generation_id, blueprint_hash: str,
                     "diagnostics": dict(row.diagnostics or {}),
                     "created_at": row.created_at.isoformat() if row.created_at else "",
                 }
-    # 只保留严格递增序列（task_seq 连续：0..n）——防止跳过中间任务
+    # 只保留严格递增序列（task_seq 连续 0..n）且前序快照链一致——
+    # 链断（任务 ID/依赖/验收语义变化）默认不复用
     by_seq = sorted(picked.values(), key=lambda c: c["task_seq"])
     usable: dict[str, dict] = {}
     expect = 0
+    prev_hash = ""
     for cp in by_seq:
         if cp["task_seq"] != expect:
             break
+        if expect > 0 and cp.get("prev_snapshot_hash") and cp["prev_snapshot_hash"] != prev_hash:
+            break  # 前序快照链不匹配（上游任务重生成过）
         usable[cp["task_id"]] = cp
+        prev_hash = cp.get("snapshot_hash", "")
         expect += 1
     return usable
 
@@ -462,6 +579,7 @@ def _process_cpp_task(
     milestone_title: str, cumulative_reference: dict[str, str],
     prior_test_names: list[str], evidence: dict[str, str],
     prior_failures: list[str] | None, is_final: bool,
+    job_lease: tuple | None = None,
 ) -> dict:
     """P8.2.1 增量流水线：ChangeSet 生成 → 确定性合成 → 一致性 → 八步验证
     → 最小补丁修复 → 通过后固化 Checkpoint。
@@ -512,7 +630,12 @@ def _process_cpp_task(
         normalized = []
         for entry in patch:
             copy = dict(entry)
-            if copy.get("operation") in ("update", "delete") and not copy.get("baseHash"):
+            # 容错补默认：DeepSeek 常省略可选字段导致整轮补丁作废
+            copy.setdefault("operation", "update" if copy.get("content") else "delete")
+            copy.setdefault("reason", "")
+            copy.setdefault("changeCategory", "source")
+            copy.setdefault("target", "reference")
+            if copy["operation"] in ("update", "delete") and not copy.get("baseHash"):
                 current = (state or {}).get("reference_files", {}).get(copy.get("path", ""))
                 if current is not None:
                     copy["baseHash"] = content_hash(current)
@@ -564,8 +687,67 @@ def _process_cpp_task(
 
     last_errors: list[dict] = []
     last_problems: list[str] = []
+    # P8.2.2：修复进度跟踪（熔断依据）与确定性修复统计
+    error_history: list[set] = []
+    stagnant_rounds = 0
+    deterministic_fixes = 0
 
-    for attempt in range(7):  # 1 生成 + 5 修复 + 1 兜底
+    def _error_signature(errors: list[dict]) -> set:
+        return {(e.get("errorCode"), (e.get("filePath") or "")[:80],
+                 (e.get("actual") or "")[:60]) for e in errors}
+
+    def _record_round(errors: list[dict]) -> None:
+        nonlocal stagnant_rounds
+        sig = _error_signature(errors)
+        error_history.append(sig)
+        if len(error_history) >= 2 and sig == error_history[-2]:
+            stagnant_rounds += 1
+        elif len(error_history) >= 2:
+            before = error_history[-2]
+            if not (sig - before):  # 未解决任何旧错误（可能新增或持平）
+                stagnant_rounds += 1
+            else:
+                stagnant_rounds = 0
+
+    def _deterministic_manifest_fix() -> bool:
+        """manifest.testNames 与实际注册名的保守对齐（不猜 CMake 语义）。
+
+        条件（全部满足才动）：consistency 报 registration-mismatch；工程里
+        存在恰好一个「已注册但未被 manifest 引用」的新测试 与 恰好一个
+        「manifest 引用但不存在」的名字 → 判定 LLM 命名笔误，按注册名为准
+        修正 manifest（验收语义 = 该测试真实存在并通过，不弱化）。
+        """
+        nonlocal deterministic_fixes
+        from app.domains.course_generation.lessons.consistency_validator import (
+            _ADD_TEST_RE,
+        )
+        mismatched = [e for e in last_errors
+                      if e.get("errorCode") == "ctest-registration-mismatch"]
+        if not mismatched:
+            return False
+        registered: list[str] = []
+        for path, content in state["reference_files"].items():
+            if "cmakelists.txt" in path.lower():
+                registered.extend(_ADD_TEST_RE.findall(content))
+        manifest_tests = list(state["manifest"].get("testNames") or [])
+        unknown = [n for n in manifest_tests if n not in registered]
+        unreferenced = [n for n in registered
+                        if n not in manifest_tests and n not in prior_test_names]
+        if len(unknown) == 1 and len(unreferenced) == 1:
+            state["manifest"]["testNames"] = [
+                unreferenced[0] if n == unknown[0] else n for n in manifest_tests]
+            deterministic_fixes += 1
+            repairs.append({
+                "round": len(repairs) + 1,
+                "problem": f"确定性修复：manifest 测试名 {unknown[0]} → {unreferenced[0]}"
+                           f"（与实际注册一致）",
+                "changedFiles": ["<buildManifest>"],
+                "outcome": "deterministic-fix",
+            })
+            return True
+        return False
+
+    for attempt in range(8):  # 1 生成 + 5 修复 + 1 熔断重生成 + 1 兜底
         # ---- 生成 / 再生成
         if state is None:
             extra = ""
@@ -574,8 +756,9 @@ def _process_cpp_task(
             elif prior_failures:
                 extra = "上一版课程此任务失败原因（务必规避）：" + "; ".join(prior_failures[:4])
             response = lesson_builder.build_cpp_cmake_changeset(
-                provider, spec, milestone_title, base_files,
-                snapshot_id, snapshot_hash, prev_contract, extra_instructions=extra)
+                _routed_provider(provider, "reasoning"), spec, milestone_title,
+                base_files, snapshot_id, snapshot_hash, prev_contract,
+                extra_instructions=extra)
             budget.llm_calls += 1
             raw_changeset = response
             try:
@@ -589,24 +772,50 @@ def _process_cpp_task(
                 continue
             ref_apply, starter_apply = compose_project_files(base_files, change_set)
             if not ref_apply.ok or not starter_apply.ok:
-                # 合成失败（baseHash 不符/重复/受保护删除）：无可用工作工程，
-                # 带结构化冲突重新生成（不进补丁路径——无合成基线可补）
                 conflicts = ref_apply.conflicts or starter_apply.conflicts
-                last_errors = conflicts
-                schema_error = "变更集冲突：" + "; ".join(
-                    f"{c.get('errorCode')}@{c.get('filePath')}"
-                    f"（期望 {str(c.get('expected'))[:60]}，实际 {str(c.get('actual'))[:60]}）"
-                    for c in conflicts[:4])
-                repairs.append({"round": len(repairs) + 1,
-                                "problem": schema_error[:300],
-                                "changedFiles": sorted({c.get("filePath", "") for c in conflicts}),
-                                "outcome": "regenerated"})
-                if not budget.llm_allowed():
-                    return _cpp_task_failed(
-                        task_id, spec, {"instructions": {}}, repairs, [],
-                        f"变更集冲突且预算耗尽：{schema_error[:300]}")
-                state = None
-                continue
+                # P8.2.2 确定性修复①：纯哈希类冲突 → 服务端回填 baseHash 重试
+                # （LLM 抄错哈希不再消耗修复轮/重新生成）
+                from app.domains.course_generation.lessons.change_applier import (
+                    hash_only_conflicts,
+                    repair_base_hashes,
+                )
+
+                if hash_only_conflicts(conflicts):
+                    fixed_reference = repair_base_hashes(base_files, change_set.reference_changes)
+                    fixed_tests = repair_base_hashes(base_files, change_set.test_changes)
+                    retry_set = change_set.model_copy(update={
+                        "reference_changes": fixed_reference,
+                        "test_changes": fixed_tests,
+                    })
+                    ref2, starter2 = compose_project_files(base_files, retry_set)
+                    if ref2.ok and starter2.ok:
+                        deterministic_fixes += 1
+                        repairs.append({
+                            "round": len(repairs) + 1,
+                            "problem": "确定性修复：baseHash 回填（"
+                                       + str(len(conflicts)) + " 处，服务端校准）",
+                            "changedFiles": sorted({c.get("filePath", "") for c in conflicts}),
+                            "outcome": "deterministic-fix",
+                        })
+                        change_set = retry_set
+                        ref_apply, starter_apply = ref2, starter2
+                        conflicts = []
+                if conflicts:
+                    last_errors = conflicts
+                    schema_error = "变更集冲突：" + "; ".join(
+                        f"{c.get('errorCode')}@{c.get('filePath')}"
+                        f"（期望 {str(c.get('expected'))[:60]}，实际 {str(c.get('actual'))[:60]}）"
+                        for c in conflicts[:4])
+                    repairs.append({"round": len(repairs) + 1,
+                                    "problem": schema_error[:300],
+                                    "changedFiles": sorted({c.get("filePath", "") for c in conflicts}),
+                                    "outcome": "regenerated"})
+                    if not budget.llm_allowed():
+                        return _cpp_task_failed(
+                            task_id, spec, {"instructions": {}}, repairs, [],
+                            f"变更集冲突且预算耗尽：{schema_error[:300]}")
+                    state = None
+                    continue
             starter_overlay = {c.path: c.content for c in change_set.starter_changes
                                if c.operation in ("create", "update")}
             state = {
@@ -643,12 +852,33 @@ def _process_cpp_task(
             last_errors = [*consistency_errors, *guard_structured]
             last_problems = [f"{e.get('errorCode')}: {e.get('actual')}"
                              for e in last_errors[:4]]
+            _record_round(last_errors)
+            # P8.2.2 确定性修复②：manifest 测试名与实际注册保守对齐
+            if _deterministic_manifest_fix():
+                continue
+            # P8.2.2 熔断：连续两轮无净改善 → 停止补丁策略，重新生成本任务
+            # （已通过任务的 Checkpoint 不受影响）
+            if stagnant_rounds >= 2:
+                repairs.append({
+                    "round": len(repairs) + 1,
+                    "problem": "修复熔断：连续两轮未减少错误——改用重新生成策略",
+                    "changedFiles": [], "outcome": "circuit-break",
+                })
+                if budget.llm_allowed():
+                    stagnant_rounds = 0
+                    error_history.clear()
+                    schema_error = "此前修复未收敛：" + "; ".join(last_problems[:3])
+                    state = None
+                    continue
+                return _cpp_task_failed(
+                    task_id, spec, material, repairs, [],
+                    "一致性检查未通过（修复熔断且预算耗尽）：" + "; ".join(last_problems[:3]))
             if not budget.llm_allowed():
                 return _cpp_task_failed(
                     task_id, spec, material, repairs, [],
                     "一致性检查未通过且修复预算耗尽：" + "; ".join(last_problems[:3]))
             repair = repair_with_agent(
-                provider, spec,
+                _routed_provider(provider, "repair"), spec,
                 classify_failure(last_problems, [e["errorCode"] for e in last_errors]),
                 last_errors, [], state["reference_files"],
                 {"manifest": state["manifest"]}, budget,
@@ -696,13 +926,24 @@ def _process_cpp_task(
                 "tokensUsed": budget.tokens_used,
                 "sandboxRuns": budget.sandbox_runs,
                 "firstAttemptPassed": not repairs,
+                "deterministicFixes": deterministic_fixes,
+                "trace": [{"round": r.get("round"), "problem": (r.get("problem") or "")[:200],
+                           "outcome": r.get("outcome")} for r in repairs],
             }
+            if not _lease_valid(job_lease):
+                return _cpp_task_failed(
+                    task_id, spec, material, repairs, verification.verifications,
+                    "Job 租约已失效（被接管或过期），本 worker 停止写入")
+            task_spec_hash = content_hash(
+                json.dumps(spec, sort_keys=True, ensure_ascii=False))
             with _session() as db:
                 _persist_checkpoint(
                     db, release_id, generation_id, task_seq, task_id,
                     blueprint_hash, CHANGESET_PROTOCOL, sandbox_image,
                     "", verification.reference_files, registry,
-                    artifact, reference_delta, verification.verifications, diagnostics)
+                    artifact, reference_delta, verification.verifications, diagnostics,
+                    task_spec_hash=task_spec_hash,
+                    prev_snapshot_hash=snapshot_hash)
             return {
                 "passed": True, "error": None, "artifact": artifact,
                 "cumulative_reference": verification.reference_files,
@@ -713,6 +954,9 @@ def _process_cpp_task(
 
         # ---- 真实验证失败 → 最小补丁修复
         verify_problems = verification.problems or ["验证未通过"]
+        _record_round([{"errorCode": "verification-failure",
+                        "filePath": "; ".join(verify_problems[:2]),
+                        "actual": "; ".join(verify_problems[:2])}])
         verify_structured = [{
             "errorCode": "verification-failure",
             "filePath": (v.get("kind") or ""),
@@ -724,19 +968,41 @@ def _process_cpp_task(
             f"[{v.get('kind')}] {d.get('message', '')}"
             for v in verification.verifications for d in v.get("diagnostics", [])[:3]
         ][:10]
+        # 相关文件 = 本任务变更的源码/头 + 全部 CMakeLists（链接/编译错误的
+        # 修复需要看到声明处与实现处，而不只是测试注册）
+        task_changed = {p: c for p, c in state["reference_files"].items()
+                        if base_files.get(p) != c}
+        relevant_for_repair = {
+            p: c for p, c in task_changed.items()
+            if p.endswith((".cpp", ".cc", ".hpp", ".h", ".txt", ".cmake"))}
+        for must in ("CMakeLists.txt", "tests/CMakeLists.txt"):
+            if must in state["reference_files"]:
+                relevant_for_repair[must] = state["reference_files"][must]
         if not budget.llm_allowed():
             return _cpp_task_failed(task_id, spec, material, repairs,
                                     verification.verifications,
                                     "验证未通过且修复预算耗尽：" + "; ".join(verify_problems[:2]))
+        # 熔断：验证类错误连续两轮无改善 → 重新生成当前任务变更集
+        if stagnant_rounds >= 2:
+            repairs.append({
+                "round": len(repairs) + 1,
+                "problem": "修复熔断：验证错误连续未收敛——改用重新生成策略",
+                "changedFiles": [], "outcome": "circuit-break",
+            })
+            stagnant_rounds = 0
+            error_history.clear()
+            schema_error = "此前验证修复未收敛：" + "; ".join(verify_problems[:3])
+            state = None
+            continue
         repair = repair_with_agent(
-            provider, spec,
+            _routed_provider(provider, "repair"), spec,
             classify_failure(verify_problems + diag_messages),
             verify_structured or [{"errorCode": "verification-failure",
                                    "filePath": "", "expected": "通过",
                                    "actual": verify_problems[0][:200],
                                    "suggestedRepairScope": "tests/CMakeLists.txt"}],
             diag_messages or verify_problems,
-            state["reference_files"],
+            relevant_for_repair,
             {"manifest": state["manifest"]}, budget,
             [r.get("problem", "") for r in repairs])
         applied_ok = bool(repair.ok and repair.patch) and _apply_repair_patch(repair.patch)[0]
@@ -875,7 +1141,12 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
     )
     blueprint_hash = snapshot_hash_of(
         {"blueprint": json.dumps(blueprint, sort_keys=True, ensure_ascii=False)})
-    job_id = _start_job(release_id, release.generation_id)
+    job_lease = _claim_job(release_id, release.generation_id)
+    if job_lease is None:
+        _update(release_id, status="failed", progress=100,
+                error="另一 worker 正在生成该版本（Job 租约冲突），稍后重试")
+        return
+    job_id = job_lease[0]
     reused_tasks: list[str] = []
     compatible_checkpoints: dict[str, dict] = {}
     if language == "cpp":
@@ -885,6 +1156,7 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
 
     for index, spec in enumerate(order):
         task_id = spec["taskId"]
+        _lease_renew(job_lease)
         _update(release_id, status="verifying", current_task=task_id,
                 progress=int(index * 90 / max(total, 1)))
 
@@ -914,6 +1186,7 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
                 ms_titles.get(spec.get("milestoneId"), ""),
                 cumulative_reference, prior_test_names, evidence,
                 prior.get(task_id), index == total - 1,
+                job_lease=job_lease,
             )
             _job_update(job_id, current_task=task_id,
                         completed_task_ids=[a["taskId"] for a in artifacts_public
@@ -1118,12 +1391,17 @@ def _run_build_inner(release_id: uuid.UUID) -> None:
         report = {
             "passed": passed_count, "total": total,
             "finalIntegration": final_record or {"status": "unknown"},
+            "taskRefinement": (release.verification_report or {}).get("taskRefinement"),
         }
         if not final_record or final_record.get("status") != "passed":
             _update(release_id, status="failed",
                     error="最终集成验证未通过（全部 CTest）",
                     artifacts=artifacts_public, verification_report=report, progress=100)
             _job_update(job_id, status="failed", error="最终集成验证未通过")
+            return
+        if not _lease_valid(job_lease):
+            _job_update(job_id, status="failed",
+                        error="Job 租约失效，ready 发布被拒绝（数据未损坏）")
             return
         _update(release_id, status="ready", progress=100, current_task=None,
                 artifacts=artifacts_public, reference_store=reference_store,

@@ -132,18 +132,9 @@ ENTITY_STUB = (
     + "double Entity::y() const { return y_; }" + NL + "}" + NL)
 
 
-def _state3() -> dict:
-    """t3 后：集成模块 + app demo（最终）。"""
+def _state3a() -> dict:
+    """t3-a 后：集成模块（engine 侧 World×Entity 协作）。"""
     state = _state2()
-    state["CMakeLists.txt"] = (
-        "cmake_minimum_required(VERSION 3.16)" + NL
-        + "project(WorldSimulation LANGUAGES CXX)" + NL
-        + "set(CMAKE_CXX_STANDARD 20)" + NL
-        + "set(CMAKE_CXX_STANDARD_REQUIRED ON)" + NL
-        + "add_subdirectory(engine)" + NL
-        + "add_subdirectory(app)" + NL
-        + "enable_testing()" + NL
-        + "add_subdirectory(tests)" + NL)
     state["engine/CMakeLists.txt"] = (
         "add_library(engine STATIC src/World.cpp src/Entity.cpp src/Integration.cpp)" + NL
         + "target_include_directories(engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)" + NL)
@@ -159,19 +150,6 @@ def _state3() -> dict:
         + "    world.update(dt);" + NL
         + '    return "t=" + std::to_string(world.elapsed()) + " " + entity.describe();' + NL
         + "}" + NL + "}" + NL)
-    state["app/CMakeLists.txt"] = (
-        "add_executable(worldsim main.cpp)" + NL
-        + "target_link_libraries(worldsim PRIVATE engine)" + NL)
-    state["app/main.cpp"] = (
-        '#include "engine/Integration.hpp"' + NL
-        + "#include <cstdio>" + NL
-        + "int main() {" + NL
-        + "    engine::World world;" + NL
-        + "    engine::Entity hero;" + NL
-        + '    hero.spawn("hero", 1.0, 2.0);' + NL
-        + '    const auto state = engine::simulate_step(world, hero, 2.0);' + NL
-        + '    std::printf("%s\\n", state.c_str());' + NL
-        + "    return 0;" + NL + "}" + NL)
     state["tests/CMakeLists.txt"] += (
         "add_executable(integration_tests test_integration.cpp)" + NL
         + "target_link_libraries(integration_tests PRIVATE engine)" + NL
@@ -191,6 +169,59 @@ def _state3() -> dict:
     return state
 
 
+def _state3b() -> dict:
+    """t3-b 后：应用入口（banner + worldsim demo）。"""
+    state = _state3a()
+    state["CMakeLists.txt"] = (
+        "cmake_minimum_required(VERSION 3.16)" + NL
+        + "project(WorldSimulation LANGUAGES CXX)" + NL
+        + "set(CMAKE_CXX_STANDARD 20)" + NL
+        + "set(CMAKE_CXX_STANDARD_REQUIRED ON)" + NL
+        + "add_subdirectory(engine)" + NL
+        + "enable_testing()" + NL
+        + "add_subdirectory(app)" + NL
+        + "add_subdirectory(tests)" + NL)
+    state["app/CMakeLists.txt"] = (
+        "add_executable(worldsim main.cpp banner.cpp)" + NL
+        + "target_include_directories(worldsim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})" + NL
+        + "target_link_libraries(worldsim PRIVATE engine)" + NL
+        + "add_executable(banner_tests ../tests/test_banner.cpp banner.cpp)" + NL
+        + "target_include_directories(banner_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})" + NL
+        + "target_link_libraries(banner_tests PRIVATE engine)" + NL
+        + "add_test(NAME app_banner COMMAND banner_tests)" + NL)
+    state["app/banner.hpp"] = (
+        "#pragma once" + NL + "#include <string>" + NL
+        + "namespace app {" + NL
+        + "std::string render_banner();" + NL
+        + "}" + NL)
+    state["app/banner.cpp"] = (
+        '#include "banner.hpp"' + NL + "namespace app {" + NL
+        + 'std::string render_banner() { return "== WorldSimulation =="; }' + NL
+        + "}" + NL)
+    state["app/main.cpp"] = (
+        '#include "banner.hpp"' + NL
+        + '#include "engine/Integration.hpp"' + NL
+        + "#include <cstdio>" + NL
+        + "int main() {" + NL
+        + '    std::printf("%s\\n", app::render_banner().c_str());' + NL
+        + "    engine::World world;" + NL
+        + "    engine::Entity hero;" + NL
+        + '    hero.spawn("hero", 1.0, 2.0);' + NL
+        + '    const auto state = engine::simulate_step(world, hero, 2.0);' + NL
+        + '    std::printf("%s\\n", state.c_str());' + NL
+        + "    return 0;" + NL + "}" + NL)
+    state["tests/test_banner.cpp"] = (
+        '#include "banner.hpp"' + NL
+        + "#include <cassert>" + NL + "#include <cstdio>" + NL
+        + "int main() {" + NL
+        + '    const auto banner = app::render_banner();' + NL
+        + '    assert(banner.find("WorldSimulation") != std::string::npos);' + NL
+        + '    assert(!banner.empty());' + NL
+        + '    std::printf("app_banner ok\\n");' + NL
+        + "    return 0;" + NL + "}" + NL)
+    return state
+
+
 INTEGRATION_STUB = (
     '#include "engine/Integration.hpp"' + NL + "namespace engine {" + NL
     + "std::string simulate_step(World& world, Entity& entity, double dt) {" + NL
@@ -199,10 +230,20 @@ INTEGRATION_STUB = (
     + "}" + NL + "}" + NL)
 
 
-STATES = {1: _state1(), 2: _state2(), 3: _state3()}
-STUBS = {1: {"engine/src/World.cpp": WORLD_STUB},
-         2: {"engine/src/Entity.cpp": ENTITY_STUB},
-         3: {"engine/src/Integration.cpp": INTEGRATION_STUB}}
+BANNER_STUB = (
+    '#include "banner.hpp"' + NL + "namespace app {" + NL
+    + 'std::string render_banner() {' + NL
+    + "    // TODO: 返回演示横幅字符串" + NL
+    + '    return "";' + NL
+    + "}" + NL + "}" + NL)
+
+_SEQ_ORDER = ["t1", "t2", "t3-a", "t3-b"]
+STATES = {"t1": _state1(), "t2": _state2(),
+          "t3-a": _state3a(), "t3-b": _state3b()}
+STUBS = {"t1": {"engine/src/World.cpp": WORLD_STUB},
+         "t2": {"engine/src/Entity.cpp": ENTITY_STUB},
+         "t3-a": {"engine/src/Integration.cpp": INTEGRATION_STUB},
+         "t3-b": {"app/banner.cpp": BANNER_STUB}}
 
 
 def _diff_changes(base: dict, target: dict) -> list[dict]:
@@ -232,22 +273,26 @@ def _diff_changes(base: dict, target: dict) -> list[dict]:
 
 
 TASK_META = {
-    1: {"taskId": "t1", "title": "工程骨架与世界时间", "expected": ["engine/src/World.cpp"],
-        "manifest": {"buildTargets": ["engine", "world_tests"], "runTargets": [],
-                     "testNames": ["world_update"]}},
-    2: {"taskId": "t2", "title": "实体系统", "expected": ["engine/src/Entity.cpp"],
-        "manifest": {"buildTargets": ["engine", "entity_tests"], "runTargets": [],
-                     "testNames": ["entity_spawn"]}},
-    3: {"taskId": "t3", "title": "最终集成", "expected": ["engine/src/Integration.cpp"],
-        "manifest": {"buildTargets": ["worldsim", "integration_tests"],
-                     "runTargets": ["worldsim"], "testNames": ["worldsim_integration"]}},
+    "t1": {"taskId": "t1", "title": "工程骨架与世界时间", "expected": ["engine/src/World.cpp"],
+           "manifest": {"buildTargets": ["engine", "world_tests"], "runTargets": [],
+                        "testNames": ["world_update"]}},
+    "t2": {"taskId": "t2", "title": "实体系统", "expected": ["engine/src/Entity.cpp"],
+           "manifest": {"buildTargets": ["engine", "entity_tests"], "runTargets": [],
+                        "testNames": ["entity_spawn"]}},
+    "t3-a": {"taskId": "t3-a", "title": "最终集成（一）：模块集成", "expected": ["engine/src/Integration.cpp"],
+             "manifest": {"buildTargets": ["engine", "integration_tests"], "runTargets": [],
+                          "testNames": ["worldsim_integration"]}},
+    "t3-b": {"taskId": "t3-b", "title": "最终集成（二）：应用入口与最终验收", "expected": ["app/banner.cpp"],
+             "manifest": {"buildTargets": ["worldsim", "banner_tests"], "runTargets": ["worldsim"],
+                          "testNames": ["app_banner"]}},
 }
 
 
-def _changeset_for(seq: int) -> dict:
-    meta = TASK_META[seq]
-    base = STATES.get(seq - 1, {})
-    target = STATES[seq]
+def _changeset_for(key: str) -> dict:
+    meta = TASK_META[key]
+    prev_index = _SEQ_ORDER.index(key) - 1
+    base = STATES[_SEQ_ORDER[prev_index]] if prev_index >= 0 else {}
+    target = STATES[key]
     diff = _diff_changes(base, target)
     ref_changes = [{k: v for k, v in c.items() if not k.startswith("_")}
                    for c in diff if not c["_test"]]
@@ -258,10 +303,10 @@ def _changeset_for(seq: int) -> dict:
         "operation": "create" if path not in target else "update",
         "baseHash": content_hash(target[path]),
         "content": stub, "reason": "挖空待实现", "changeCategory": "source",
-    } for path, stub in STUBS[seq].items()]
+    } for path, stub in STUBS[key].items()]
     return {
         "taskId": meta["taskId"],
-        "baseSnapshotId": "root" if not base else f"verified:t{seq - 1}",
+        "baseSnapshotId": "root" if not base else f"verified:{_SEQ_ORDER[prev_index]}",
         "baseSnapshotHash": content_hash(json.dumps(sorted(base))),
         "instructions": {
             "title": meta["title"], "context": "演化工程", "goal": meta["title"],
@@ -279,7 +324,7 @@ def _changeset_for(seq: int) -> dict:
     }
 
 
-CHANGESETS = {1: _changeset_for(1), 2: _changeset_for(2), 3: _changeset_for(3)}
+CHANGESETS = {k: _changeset_for(k) for k in _SEQ_ORDER}
 
 
 def _cpp_blueprint() -> dict:
@@ -298,8 +343,9 @@ def _cpp_blueprint() -> dict:
              "dependsOn": [], "deliverables": ["World"], "acceptanceCriteria": ["world_update"], "sourceEvidence": []},
             {"taskId": "t2", "milestoneId": "ms-2", "title": "实体系统", "description": "d",
              "dependsOn": ["t1"], "deliverables": ["Entity"], "acceptanceCriteria": ["entity_spawn"], "sourceEvidence": []},
-            {"taskId": "t3", "milestoneId": "ms-3", "title": "最终集成", "description": "d",
-             "dependsOn": ["t2"], "deliverables": ["worldsim"], "acceptanceCriteria": ["integration"], "sourceEvidence": []},
+            {"taskId": "t3", "milestoneId": "ms-3", "title": "最终集成", "description": "连接 World 与 Entity，实现可运行 demo，执行全部 CTest 测试",
+             "dependsOn": ["t2"], "deliverables": ["集成接口", "demo 可执行程序", "全量测试"],
+             "acceptanceCriteria": ["集成测试通过", "demo 运行", "全量回归"], "sourceEvidence": []},
         ],
         "knowledgeRequirements": [],
     }
@@ -309,23 +355,23 @@ class ScriptedProvider:
     """按任务返回确定性 ChangeSet；repair 调用返回空补丁（模拟修复失败/成功可控）。"""
 
     name = "mock-cpp"
-    current_task_seq = 1
+    current_task = "t1"
     calls: list[str] = []
 
     def chat(self, system, user):
         if "最小补丁" in system or "修复工程师" in system and "最小补丁" in system:
-            self.calls.append(f"repair:t{self.current_task_seq}")
+            self.calls.append(f"repair:{self.current_task}")
             return type("R", (), {"content": '{"diagnosis":"none","failureClass":"unknown","patch":[]}',
                                   "prompt_tokens": 1, "completion_tokens": 1, "model": "mock"})()
-        match = re.search(r'"taskId":\s*"?t(\d)', user)
-        if match:
-            self.current_task_seq = int(match.group(1))
-            self.calls.append(f"build:t{self.current_task_seq}")
+        match = re.search(r'"taskId"\s*:\s*"?([a-z0-9-]+)"?', user)
+        if match and match.group(1) in CHANGESETS:
+            self.current_task = match.group(1)
+            self.calls.append(f"build:{self.current_task}")
         else:
-            self.calls.append(f"repair:t{self.current_task_seq}")
+            self.calls.append(f"repair:{self.current_task}")
             return type("R", (), {"content": '{"diagnosis":"none","failureClass":"unknown","patch":[]}',
                                   "prompt_tokens": 1, "completion_tokens": 1, "model": "mock"})()
-        changeset = CHANGESETS[self.current_task_seq]
+        changeset = CHANGESETS[self.current_task]
         return type("R", (), {"content": json.dumps(changeset, ensure_ascii=False),
                               "prompt_tokens": 1, "completion_tokens": 1, "model": "mock"})()
 
@@ -407,26 +453,32 @@ def _run_student_journey(client, db_session_factory, release_id: str):
             db.commit()
 
     evaluate("t1", expect_pass=False)
-    student_writes({"engine/src/World.cpp": STATES[1]["engine/src/World.cpp"]})
+    student_writes({"engine/src/World.cpp": STATES["t1"]["engine/src/World.cpp"]})
     evaluate("t1", expect_pass=True)
 
     act = client.post(f"/api/v1/projects/{project_id}/tasks/t2/activate", json={})
     assert act.status_code == 200 and act.json()["activated"], act.text
     evaluate("t2", expect_pass=False)
-    student_writes({"engine/src/Entity.cpp": STATES[2]["engine/src/Entity.cpp"]})
+    student_writes({"engine/src/Entity.cpp": STATES["t2"]["engine/src/Entity.cpp"]})
     evaluate("t2", expect_pass=True)
 
-    act = client.post(f"/api/v1/projects/{project_id}/tasks/t3/activate", json={})
+    act = client.post(f"/api/v1/projects/{project_id}/tasks/t3-a/activate", json={})
     assert act.status_code == 200, act.text
-    evaluate("t3", expect_pass=False)
-    student_writes({"engine/src/Integration.cpp": STATES[3]["engine/src/Integration.cpp"]})
-    evaluate("t3", expect_pass=True)
+    evaluate("t3-a", expect_pass=False)
+    student_writes({"engine/src/Integration.cpp": STATES["t3-a"]["engine/src/Integration.cpp"]})
+    evaluate("t3-a", expect_pass=True)
+
+    act = client.post(f"/api/v1/projects/{project_id}/tasks/t3-b/activate", json={})
+    assert act.status_code == 200, act.text
+    evaluate("t3-b", expect_pass=False)
+    student_writes({"app/banner.cpp": STATES["t3-b"]["app/banner.cpp"]})
+    evaluate("t3-b", expect_pass=True)
 
     progress = client.get(f"/api/v1/projects/{project_id}/course-progress").json()
     assert progress["allCompleted"] is True
     report = client.get(f"/api/v1/projects/{project_id}/final-report")
     assert report.status_code == 200, report.text
-    assert report.json()["completedTasks"] == 3
+    assert report.json()["completedTasks"] == 4
     return project_id
 
 
@@ -443,13 +495,17 @@ def test_cpp_worldsim_student_journey(cpp_course_env, db_session):
     detail = _wait_release(client, release_id)
     assert detail["status"] == "ready", detail.get("error")
     assert detail["language"] == "cpp"
-    assert detail["passedTasks"] == detail["totalTasks"] == 3
+    # 拆分后四任务（t3 → t3-a 集成 + t3-b Demo）
+    assert detail["passedTasks"] == detail["totalTasks"] == 4
+    refinement = (detail.get("verificationReport") or {}).get("taskRefinement") or {}
+    assert refinement.get("refined") is True
+    assert refinement.get("mappings", [{}])[0].get("originalTaskId") == "t3"
 
     arts = {a["taskId"]: a for a in detail["artifacts"]}
-    for tid in ("t1", "t2"):
+    for tid in ("t1", "t2", "t3-a"):
         kinds = {v["kind"] for v in arts[tid]["verifications"]}
         assert {"cmake-discovery", "reference-tests", "starter-expected-fail"} <= kinds, (tid, kinds)
-    final_kinds = {v["kind"] for v in arts["t3"]["verifications"]}
+    final_kinds = {v["kind"] for v in arts["t3-b"]["verifications"]}
     assert {"final-integration", "demo-run"} <= final_kinds
     starter_check = next(v for v in arts["t1"]["verifications"]
                          if v["kind"] == "starter-expected-fail")
@@ -459,7 +515,7 @@ def test_cpp_worldsim_student_journey(cpp_course_env, db_session):
 
     # 检查点 API（公开信息，无参考快照）
     checkpoints = client.get(f"/api/v1/course-releases/{release_id}/checkpoints").json()
-    assert [c["taskId"] for c in checkpoints] == ["t1", "t2", "t3"]
+    assert [c["taskId"] for c in checkpoints] == ["t1", "t2", "t3-a", "t3-b"]
     assert "snapshot" not in json.dumps(checkpoints)
 
     # 生成即修复记录：无修复轮（材料一次通过）
@@ -481,20 +537,23 @@ def test_cpp_resume_from_checkpoint(cpp_course_env, db_session):
     client, gen_id, provider = cpp_course_env
 
     # 受控故障：t3 声明不存在的测试名 → 一致性拒绝；修复返回空补丁 → 修复失败
-    original = CHANGESETS[3]
+    original = CHANGESETS["t3-b"]
     broken = json.loads(json.dumps(original))
-    broken["buildManifest"]["testNames"] = ["ghost_test"]
-    CHANGESETS[3] = broken
+    # 两个未知测试名：确定性对齐条件（一一对应）不满足 → LLM 空补丁 → 失败
+    broken["buildManifest"]["testNames"] = ["ghost_a", "ghost_b"]
+    CHANGESETS["t3-b"] = broken
     try:
         resp = client.post(f"/api/v1/course-generations/{gen_id}/build-lessons")
         release_id = resp.json()["id"]
         detail = _wait_release(client, release_id)
         assert detail["status"] == "failed"
-        assert detail["verificationReport"]["failed_task"] == "t3"
+        assert detail["verificationReport"]["failed_task"] == "t3-b"
         first_builds = [c for c in provider.calls if c.startswith("build:")]
-        assert first_builds == ["build:t1", "build:t2", "build:t3"]
+        # t3-b 首次生成 + 熔断后重新生成（确定性受控故障循环）均为合法调用
+        assert first_builds[:3] == ["build:t1", "build:t2", "build:t3-a"]
+        assert first_builds[3:] and set(first_builds[3:]) == {"build:t3-b"}
     finally:
-        CHANGESETS[3] = original
+        CHANGESETS["t3-b"] = original
 
     # ---- resume：t1/t2 从检查点复用（不调 LLM），仅重生成 t3
     provider.calls.clear()
@@ -506,7 +565,7 @@ def test_cpp_resume_from_checkpoint(cpp_course_env, db_session):
     assert detail["releaseVersion"] == 2
 
     # 断言：本轮只调用 t3 的 LLM
-    assert provider.calls == ["build:t3"], provider.calls
+    assert provider.calls == ["build:t3-b"], provider.calls
     # 旧 release 不可变（仍 failed）
     old = client.get(f"/api/v1/course-releases/{release_id}").json()
     assert old["status"] == "failed"
@@ -538,7 +597,7 @@ def test_cpp_worldsim_real_llm_generation(cpp_course_env, db_session):
     detail = _wait_release(client, resp.json()["id"], timeout_s=2400)
     assert detail["status"] == "ready", (
         f"真实 LLM 课程未全通过：{detail.get('error')}")
-    assert detail["passedTasks"] == detail["totalTasks"] == 3
+    assert detail["passedTasks"] == detail["totalTasks"] == 4
     body = json.dumps(detail)
     assert "referenceFiles" not in body
 

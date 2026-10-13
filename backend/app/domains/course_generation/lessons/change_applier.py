@@ -64,24 +64,21 @@ def apply_file_changes(base_files: dict[str, str], changes,
                     "update-missing", path, "基线存在该文件",
                     "基线中不存在（应使用 create）", path))
                 continue
-            # 生成场景为服务端单写者：LLM 抄写 12 位哈希易错一位——
-            # update 的 baseHash 不匹配降级为警告（记录实际值，可观测），
-            # "不该改的文件"由回归保护与一致性验证裁决；delete 仍严格校验。
+            # 严格乐观锁（P8.2.2 恢复）：baseHash 缺失或不匹配一律拒绝。
+            # LLM 抄错哈希由服务端「程序化回填」确定性修复
+            # （repair_base_hashes），绝不静默覆盖。
             actual_hash = content_hash(base_content)
-            hash_warning = None
             if not change.base_hash:
-                hash_warning = f"未提供 baseHash（实际={actual_hash}）"
-            elif change.base_hash != actual_hash:
-                hash_warning = f"baseHash={change.base_hash} 与实际={actual_hash} 不符"
-            result.files[path] = change.content
-            if hash_warning:
-                result.applied.append({
-                    "path": path, "operation": "update",
-                    "hash": content_hash(change.content),
-                    "reason": change.reason, "changeCategory": change.change_category,
-                    "baseHashWarning": hash_warning,
-                })
+                result.conflicts.append(_conflict(
+                    "missing-base-hash", path, "update 必须提供 baseHash",
+                    f"未提供（实际={actual_hash}）", path))
                 continue
+            if change.base_hash != actual_hash:
+                result.conflicts.append(_conflict(
+                    "base-hash-mismatch", path,
+                    f"baseHash={change.base_hash}", f"实际={actual_hash}", path))
+                continue
+            result.files[path] = change.content
 
         else:  # delete
             if base_content is None:
@@ -161,18 +158,44 @@ def compose_project_files(base_files: dict[str, str], change_set: LessonChangeSe
         return reference, ApplyResult(ok=False, files=dict(base_files),
                                       conflicts=reference.conflicts)
     # starter 组重复同上：与合成参考版比对由 update 语义处理（见下）
-    # starter 挖空允许覆盖参考版同名文件：create-on-existing 规范化为
-    # update（baseHash=参考版当前 hash）——挖空语义本就是"覆盖参考实现"。
+    # Starter Overlay Base（两阶段快照关系，D47）：starter 变更的基线是
+    # 本轮服务端合成的参考版本——由服务端权威回填 baseHash（create-on-
+    # existing 规范化为 update；update 的哈希以参考版为准重写）。挖空语义
+    # 本就是"基于参考版修改"，不依赖 LLM 抄写哈希。
     starter_changes = []
     for change in change_set.starter_changes:
-        if (change.operation == "create"
-                and change.path in reference.files
-                and change.change_category == "source"):
+        ref_version = reference.files.get(change.path)
+        if (change.change_category == "source" and ref_version is not None
+                and change.operation in ("create", "update")):
             starter_changes.append(change.model_copy(update={
                 "operation": "update",
-                "base_hash": content_hash(reference.files[change.path]),
+                "base_hash": content_hash(ref_version),
             }))
         else:
             starter_changes.append(change)
     starter = apply_file_changes(reference.files, starter_changes)
     return reference, starter
+
+
+def hash_only_conflicts(conflicts: list[dict]) -> bool:
+    """冲突是否全部为哈希类（可安全程序化回填）。"""
+    return bool(conflicts) and all(
+        c.get("errorCode") in ("base-hash-mismatch", "missing-base-hash")
+        for c in conflicts)
+
+
+def repair_base_hashes(base_files: dict[str, str], changes):
+    """确定性哈希回填：update/delete 的 baseHash 以服务端当前内容为准重写。
+
+    仅当冲突全部为哈希类时由调用方使用（变更内容本身未被判有问题）。
+    返回新的 FileChange 列表（原列表不变）。
+    """
+    repaired = []
+    for change in changes:
+        if change.operation in ("update", "delete") and change.path in base_files:
+            actual = content_hash(base_files[change.path])
+            if change.base_hash != actual:
+                repaired.append(change.model_copy(update={"base_hash": actual}))
+                continue
+        repaired.append(change)
+    return repaired

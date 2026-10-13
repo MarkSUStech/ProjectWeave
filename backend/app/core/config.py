@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     execution_cpus: float = 1.0
     execution_pids_limit: int = 128
 
+    # --- C++ 课程生成模型路由与预算（P8.2.2，D47）---
+    # 空字符串 = 使用默认 provider 模型；推理/修复模型可独立指定（如
+    # deepseek-reasoner）。真实收费模型只能经显式配置启用，测试一律不读。
+    course_generation_model: str = ""
+    course_reasoning_model: str = ""
+    course_repair_model: str = ""
+    # 每任务 LLM 调用/Token/耗时与 Docker 验证上限（服务端硬限制）
+    course_max_llm_calls_per_task: int = 7
+    course_max_llm_tokens_per_task: int = 300_000
+    course_max_generation_time_s: int = 1800
+    course_max_sandbox_runs_per_task: int = 26
+
     # --- CMake 项目构建 profile（P8.1，D44）---
     # CMake Configure/Build/CTest 比普通脚本执行更重：独立上限（服务端限定，
     # 客户端只能在其内请求；仍受全局开关与并发池约束）。
