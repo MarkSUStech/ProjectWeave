@@ -879,3 +879,13 @@ Fingerprint/契约/租约校验全部生效。
   无关，独立复跑即绿；race 测试修复后 5/5 稳定）；前端 **284 全过**；
   harness 加固单测 16 过（含 Final Repair 控制器/失败分类/协作取消/
   暂停边界/取消拒发布）
+
+**P8.2.3.2 真实 DeepSeek 四任务从零运行记录（如实）**：t1 World、t2 Entity、
+t3 Integration **全部由真实 DeepSeek 在 Harness 中自主开发完成**（各任务
+独立评估真 CMake/CTest/稳定性通过 + Verified Checkpoint 固化，逐任务累积
+快照）。t4 Demo 未完成：Agent 陷入 read_workspace_file 循环（122 次读取/
+1.7M token 无收敛），触发**会话总 Token 预算 2.3M 上限正确暂停**（预算
+防线按设计生效——保存状态等待提高预算后续跑，非失控消耗）。瓶颈分析：
+长会话上下文累积后模型重复读取不收敛——下一阶段应做上下文压缩/摘要
+（超 N 轮触发 Session Summary）与重复读取检测。发布未触发（t4 无
+Checkpoint）——如实记录。
