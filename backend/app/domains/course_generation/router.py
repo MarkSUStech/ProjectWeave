@@ -135,7 +135,9 @@ def publish(gen_id: str, db: Session = Depends(get_db)) -> GenerationPublishRead
 def _public_artifact(a: dict) -> ArtifactPublicRead:
     """公开材料：剥离 H4（答案级帮助走 Tutor Gate）与参考实现相关字段。"""
     data = dict(a)
-    hints = [h for h in (data.get("hints") or []) if (h.get("level") or h.get("hintLevel") or 1) <= 3]
+    # D51 容错：真实 LLM 生成的 hints 偶含裸字符串（无 level）——过滤保留结构项
+    hints = [h for h in (data.get("hints") or [])
+             if isinstance(h, dict) and (h.get("level") or h.get("hintLevel") or 1) <= 3]
     data["hints"] = hints
     return ArtifactPublicRead.model_validate(data)
 

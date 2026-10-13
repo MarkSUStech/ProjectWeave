@@ -585,6 +585,21 @@ def _publish_release(db, row: CourseDevSession) -> dict:
         return {"ok": False, "error": f"缺少 Verified Checkpoint：{missing}",
                 "class": "contract"}
 
+    # D51 Final Repair 发布链：存在 __final_repair__ 修复检查点时——
+    # 最终快照/验证/发布使用修复版（验证新版本才发布新版本）；学生任务
+    # 仍为原蓝图任务（repair 不入学生任务清单）
+    from app.domains.course_generation.models import CourseCheckpoint as _CP
+
+    with _db() as pdb:
+        repair_rows = pdb.scalars(select(_CP).where(
+            _CP.generation_id == row.generation_id,
+            _CP.task_id == "__final_repair__"
+        ).order_by(_CP.created_at.desc())).all()
+    repair_snapshot = dict(repair_rows[0].snapshot_files or {}) if repair_rows else None
+    repair_delta = list(repair_rows[0].reference_delta or []) if repair_rows else None
+    repair_manifest = ((repair_rows[0].artifact or {}).get("buildManifest") or {} \
+                       if repair_rows else {})
+
     ordered = [checkpoints[tid] for tid in task_order]
     for i, cp in enumerate(ordered):
         if cp["task_seq"] != i:
@@ -595,8 +610,10 @@ def _publish_release(db, row: CourseDevSession) -> dict:
             return {"ok": False, "error": f"快照链断裂：{cp['task_id']}"}
 
     final_cp = ordered[-1]
-    final_files = final_cp["snapshot_files"]
-    manifest = (final_cp.get("artifact") or {}).get("buildManifest") or {}
+    final_files = repair_snapshot or final_cp["snapshot_files"]
+    manifest = dict((final_cp.get("artifact") or {}).get("buildManifest") or {})
+    if repair_manifest:
+        manifest.update(repair_manifest)
     run_targets = manifest.get("runTargets") or []
 
     # Final Course Evaluation（D50）：全量 CTest + 稳定性 + Demo（真沙箱）
@@ -631,6 +648,7 @@ def _publish_release(db, row: CourseDevSession) -> dict:
                 "finalReport": {"status": "failed", "stability": stability}}
     final_report = {
         "status": "passed",
+        "usedFinalRepairSnapshot": bool(repair_snapshot),
         "blueprintHash": blueprint_hash,
         "checkpointCount": len(ordered), "taskCount": len(task_order),
         "requiredTests": required_tests,
@@ -674,7 +692,11 @@ def _publish_release(db, row: CourseDevSession) -> dict:
         progress=100,
         blueprint_snapshot=effective_blueprint,
         artifacts=[cp["artifact"] for cp in ordered],
-        reference_store={cp["task_id"]: cp["reference_delta"] for cp in ordered},
+        reference_store={
+            cp["task_id"]: (
+                repair_delta if (repair_delta and cp is ordered[-1])
+                else cp["reference_delta"])
+            for cp in ordered},
         verification_report={
             "passed": len(ordered), "total": len(ordered),
             "finalIntegration": {"status": "passed", "source": "harness-publish"},

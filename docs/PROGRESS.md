@@ -889,3 +889,53 @@ t3 Integration **全部由真实 DeepSeek 在 Harness 中自主开发完成**（
 长会话上下文累积后模型重复读取不收敛——下一阶段应做上下文压缩/摘要
 （超 N 轮触发 Session Summary）与重复读取检测。发布未触发（t4 无
 Checkpoint）——如实记录。
+
+### P8.2.3.3 Agent 上下文工程与自主收敛（D51）
+
+**Phase 1 真实诊断**（上轮 t4 Trace 量化）：60 次读取集中在
+`tests/test_world_entity_integration.cpp`——**模型传给 path 的字符串带
+JSON 引号**（`'"tests/..."'`）→ 工具查不到文件返回 error → 模型换
+offset 重试仍找不到 → 22 种 (path,offset) 组合循环 ~170 万 token。另
+60% 是纯重复（同文件同范围）。根因：①路径参数未规范化；②无工作记忆
+（模型不知道已读过）；③无循环检测；④resume 重新灌入旧消息。
+
+- [x] **路径规范化**（`memory.normalize_path_arg`）：read/apply 的 path
+  剥离包裹引号/空白/反引号——根因修复（单测 5 形态）
+- [x] **Working Memory**（`memory.WorkingMemory`）：Harness 维护已读
+  文件（hash+区间合并+revision）/已修改文件/已知问题/有效进展/下一步；
+  注入 system 提示（"已读取文件无需重复读取"）；随 Runtime Snapshot
+  持久化与恢复；事实来自 ChangeApplier/沙箱真实结果——不信任模型自述
+- [x] **Loop Detector**（`memory.LoopDetector`）：指纹 =
+  工具+规范化参数+revision+文件 Hash。分级响应：首次正常 → 第 2 次
+  `already-read`（缓存引用 + 200 字预览，不再回传全文）→ 第 3+ 次
+  `repeated-no-new-information`（明确要求停止 + recommendedActions）
+- [x] **上下文压缩**（`_compact_context`）：resume 时旧消息 >24 条 →
+  压缩为 system+摘要提示+尾部 16 条（完整工具交互边界截断，配对保持，
+  `_sanitize_messages` 兜底）——防 API 400 复发
+- [x] **Meaningful Progress + 分层恢复**：apply 成功 / evaluate 通过 /
+  checkpoint → 重置停滞计数；连续 5 轮无进展 → L1 提醒（注入 user
+  消息）→ L2 重规划（从 Task Spec+Working Memory+真实 Workspace 构建
+  nextSteps+firstAction）→ L3 上下文压缩重置 → 超过 max_recovery=3 →
+  stalled 受控暂停（不再自动烧 token）
+- [x] **Checkpoint 版本绑定**：save_checkpoint 记录当时指纹；
+  submit_task 校验当前指纹 == 保存指纹（评估后修改→提交拒绝，需重评
+  估或回滚）——不依赖 checkpoint_saved 布尔
+- [x] **Final Repair 发布链**：`__final_repair__` 修复检查点（
+  `_persist_repair_checkpoint`，旧检查点绝不覆盖）→ `_publish_release`
+  存在修复检查点时**最终快照 = 修复版**（修复 delta 进入
+  reference_store 最后任务条目；`usedFinalRepairSnapshot` 记录来源；
+  学生任务数不变）
+- [x] 验证：后端 **386 全过**（+11 D51 专项：路径规范化 5 形态/指纹
+  与计数/工作记忆区间合并往返/循环防护真实 handler/压缩配对保持/停滞
+  分层恢复有界/修改重置停滞/checkpoint 后修改拒提交/修复快照发布链
+  单元——断言 final_files 用 FIXED 且旧检查点仍 OLD）；E2E（真
+  Docker）Demo 课程 happy path 发布通过
+
+**P8.2.3.3 真实 DeepSeek t4 续跑结果（Gate 1/4 达成）**：恢复上轮会话
+`87c0b456`（t1/t2/t3 Verified Checkpoint 原样复用，未重新生成）；预算
+2M→4M 后**单 slice 70s / ~15.6 万 token 完成 t4 并自动发布 ready
+CourseRelease `b41de0ae`**（4/4 任务；对照上轮：同任务消耗 170 万+ token
+未完成——上下文工程使 t4 token 降至约 1/11）。学生项目实例化成功
+（四任务 DAG + starter 文件 + courseMode）。附带修复：真实 LLM 生成的
+hints 偶为裸字符串导致 Plan API 500——两层容错（release 读/plan 读均
+规范化为 {level, text}）。总消耗（全会话）2,463,858 token。

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from app.agents.registry import ToolRegistry
 from app.agents.schemas import ToolSpec
+from app.domains.course_generation.harness.memory import normalize_path_arg
 from app.domains.course_generation.lessons.change_set import FileChange
 from app.domains.course_generation.verification.course_verifier import (
     run_cmake_operation,
@@ -38,17 +39,59 @@ def build_harness_tools(workspace, harness) -> ToolRegistry:
         max_result_chars=TOOL_RESULT_LIMIT,
     ))
 
+    def _read_with_loop_guard(ctx, path="", offset=0, limit=400):
+        # D51：路径规范化（模型常传带引号字符串——t4 死循环根因）+ 循环防护
+        path = normalize_path_arg(path)
+        try:
+            offset_i, limit_i = int(offset or 0), int(limit or 400)
+        except (TypeError, ValueError):
+            offset_i, limit_i = 0, 400
+        result = workspace.read_file(path, offset_i, limit_i)
+        if result.get("error"):
+            return result
+        from app.domains.course_generation.lessons.change_set import content_hash
+
+        revision = result.get("revision", 0)
+        file_hash = content_hash(workspace.reference_files.get(path, ""))
+        has_new = harness.memory.record_read(
+            path, file_hash, revision, offset_i, offset_i + limit_i)
+        fingerprint = harness.loops.fingerprint(
+            "read_workspace_file", {"path": path, "offset": offset_i}, revision,
+            file_hash)
+        count = harness.loops.observe(fingerprint)
+        if has_new and count == 1:
+            return result
+        if count <= 2:
+            harness.memory.stats["cachedReads"] += 1
+            return {
+                "status": "already-read", "path": path,
+                "contentHash": file_hash, "revision": revision,
+                "message": "该文件此范围已完整读取（版本未变化），返回缓存引用。",
+                "contentPreview": (result.get("content") or "")[:200],
+                "recommendedActions": ["apply_file_changes", "cmake_build",
+                                       "evaluate_lesson"],
+            }
+        harness.memory.stats["repeatedReads"] += 1
+        return {
+            "status": "repeated-no-new-information", "path": path,
+            "workspaceRevision": revision, "contentChanged": False,
+            "message": "当前文件内容此前已完整读取，本次没有新信息。"
+                       "请停止重复读取，选择有实际进展的下一步。",
+            "recommendedActions": ["apply_file_changes", "cmake_build",
+                                   "run_ctest", "evaluate_lesson"],
+        }
+
     reg.register(ToolSpec(
         name="read_workspace_file",
-        description="读取工作区文件内容（支持行偏移与行数上限；同时给出 starter 挖空版预览）。",
+        description="读取工作区文件内容（支持行偏移与行数上限）。path 是裸字符串"
+                    "（不要加引号）。重复读取相同范围会得到缓存摘要而非重复内容。",
         parameters={"type": "object",
                     "properties": {
                         "path": {"type": "string"},
                         "offset": {"type": "integer", "default": 0},
                         "limit": {"type": "integer", "default": 400}},
                     "required": ["path"]},
-        handler=lambda ctx, path="", offset=0, limit=400:
-            workspace.read_file(path, int(offset), int(limit)),
+        handler=_read_with_loop_guard,
         max_result_chars=TOOL_RESULT_LIMIT,
     ))
 
@@ -216,10 +259,13 @@ def build_harness_tools(workspace, harness) -> ToolRegistry:
     return reg
 
 
-def _apply_changes(workspace, raw_changes):
+def _apply_changes(workspace, raw_changes, harness=None):
     normalized = []
     for entry in raw_changes:
         copy = dict(entry)
+        # D51：路径规范化（模型常传带引号的字符串）
+        if copy.get("path"):
+            copy["path"] = normalize_path_arg(str(copy["path"]))
         copy.setdefault("operation", "update" if copy.get("content") else "delete")
         copy.setdefault("reason", "")
         copy.setdefault("changeCategory", "source")
@@ -233,7 +279,13 @@ def _apply_changes(workspace, raw_changes):
             "expected": "合法 FileChange", "actual": str(exc)[:200]}]}
     result = workspace.apply_changes(changes)
     if result.get("ok"):
-        harness.invalidate_evaluation_after_change()  # D49：修改即失效
+        if harness is not None:
+            harness.invalidate_evaluation_after_change()  # D49：修改即失效
+        for applied in result.get("applied", []):
+            if harness is not None:
+                harness.memory.record_modification(
+                applied.get("path", ""),
+                f"修改 {applied.get('path', '')}（revision {result.get('revision')}）")
     return result
 
 

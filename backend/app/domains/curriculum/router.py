@@ -32,9 +32,22 @@ def get_plan(project_id: str, db: Session = Depends(get_db)) -> PlanDetailRead:
     except PlanError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     _append_plan_event(db, plan, "plan-generated")
+    # D51 容错：真实 LLM 生成的 hints 偶为裸字符串——规范化为 {level, text}
+    def _safe_hints(hints):
+        if not isinstance(hints, list):
+            return hints
+        return [{"level": 1, "text": str(h)} if isinstance(h, str) else h
+                for h in hints]
+
+    safe_tasks = []
+    for t in tasks:
+        data = dict(t.__dict__) if hasattr(t, "__dict__") else dict(t)
+        if isinstance(data.get("hints"), list):
+            data["hints"] = _safe_hints(data["hints"])
+        safe_tasks.append(PlanTaskRead.model_validate(data))
     return PlanDetailRead(
         plan=_plan_read(plan),
-        tasks=[PlanTaskRead.model_validate(t) for t in tasks],
+        tasks=safe_tasks,
     )
 
 

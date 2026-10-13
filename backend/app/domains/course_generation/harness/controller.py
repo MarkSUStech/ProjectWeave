@@ -99,6 +99,13 @@ class HarnessController:
     final_phase: str = ""           # developing | repairing（D50）
     control_state: dict = None      # {pause_requested, cancel_requested}（D50）
     _control_reader: object = None
+    # D51：工作记忆 / 循环检测 / 分层恢复
+    memory: object = None
+    loops: object = None
+    recovery_level: int = 0          # 0 正常 | 1 提醒 | 2 重规划 | 3 上下文重置
+    saved_checkpoint_fingerprint: str = ""  # D51：保存时指纹
+    max_recovery: int = 3
+    max_stagnation: int = 5          # 连续无进展轮数 → 恢复
     timeline: list = None
     no_progress: int = 0
     completed: bool = False
@@ -168,6 +175,56 @@ class HarnessController:
             return "paused"
         return "continue"
 
+    def _persist_repair_checkpoint(self) -> None:
+        """Final Repair 成果持久化：追加修复检查点（旧检查点不变）。
+
+        task_id = 原最后任务 + "-final"，task_seq 保持最后任务序——
+        发布按 task_id 集合匹配 blueprint（-final 不入学生任务）。
+        """
+        last_task = (self.workspace.base_snapshot.get("testOrder") or [])
+        repair_id = "__final_repair__"
+        with self.db_factory() as db:
+            from app.domains.course_generation.models import CourseCheckpoint
+
+            # 清理旧修复条目（同 task_id 只留最新）
+            olds = db.scalars(
+                __import__("sqlalchemy").select(CourseCheckpoint).where(
+                    CourseCheckpoint.generation_id == self.generation_id,
+                    CourseCheckpoint.task_id == repair_id))
+            for old in olds:
+                db.delete(old)
+            manifest = dict(self.workspace.manifest or {})
+            manifest.setdefault("testNames",
+                                list(self.prior_tests or []))
+            db.add(CourseCheckpoint(
+                release_id=self.release_id,
+                generation_id=self.generation_id,
+                task_seq=len(last_task),
+                task_id=repair_id,
+                blueprint_hash=self.blueprint_hash,
+                protocol_version="cpp-changeset-v1",
+                sandbox_image="projectweave-sandbox-cpp:clang15-bookworm",
+                snapshot_files=dict(self.workspace.reference_files),
+                task_spec_hash="",
+                prev_snapshot_hash="",
+                test_registry=list(self.prior_tests or []),
+                artifact={
+                    "taskId": repair_id, "milestoneId": "", "language": "cpp",
+                    "instructions": self.workspace.instructions or {},
+                    "starterFiles": [], "testFiles": [],
+                    "buildManifest": manifest, "hints": [],
+                    "status": "tests-passed",
+                    "verifications": (self.last_evaluation.verifications
+                                      if self.last_evaluation else []),
+                    "repairs": [], "error": None,
+                },
+                reference_delta=[],
+                verification_evidence=(self.last_evaluation.verifications
+                                      if self.last_evaluation else []),
+                diagnostics={"harness": "final-repair", "phase": "repairing"},
+            ))
+            db.commit()
+
     def _session_lease_valid(self) -> bool:
         """会话租约校验（CourseDevSession 行，非 GenerationJob）。"""
         if self.job_lease is None:
@@ -191,6 +248,29 @@ class HarnessController:
     def invalidate_evaluation_after_change(self) -> None:
         """工具回调：apply/update 成功后由 tools.py 调用。"""
         self._invalidate_evaluation("工作区文件/材料修改")
+
+    def init_memory(self) -> None:
+        from app.domains.course_generation.harness.memory import (
+            LoopDetector,
+            WorkingMemory,
+        )
+
+        self.memory = WorkingMemory(
+            task_id=self.task_spec.get("taskId", ""),
+            goal=self.task_spec.get("title", ""),
+            workspace_revision=self.workspace.revision)
+        self.loops = LoopDetector()
+
+    def load_memory(self, data: dict) -> None:
+        from app.domains.course_generation.harness.memory import LoopDetector
+
+        self.init_memory()
+        if data:
+            from app.domains.course_generation.harness.memory import WorkingMemory
+
+            self.memory = WorkingMemory.from_dict(data)
+            self.memory.workspace_revision = self.workspace.revision
+        self.loops = LoopDetector()
 
     def init_acceptance_contract(self, task_spec: dict,
                                  prior_tests: list[str]) -> None:
@@ -250,7 +330,13 @@ class HarnessController:
             self.last_evaluation = evaluate_lesson(
                 material, self.workspace.base_snapshot.get("referenceFiles", {}),
                 self.prior_tests or [], self.is_final, stability_runs=2)
-        self.last_feedback = self.last_evaluation.to_feedback()
+        if self.last_evaluation is not None and self.last_evaluation.engineering == "passed":
+            self.memory.rounds_since_progress = 0
+            self.memory.last_progress = "evaluate_lesson 通过（engineering=passed）"
+            if "评估通过" not in self.memory.completed_steps:
+                self.memory.completed_steps.append("评估通过")
+        self.last_feedback = (self.last_evaluation.to_feedback()
+                              if self.last_evaluation else self.last_feedback)
         # Fingerprint 绑定：本次评估只证明这个精确版本（D49）
         self.eval_fingerprint = self.evaluation_fingerprint()
         self.last_feedback["fingerprint"] = self.eval_fingerprint
@@ -279,6 +365,8 @@ class HarnessController:
         if not self._session_lease_valid():
             return {"ok": False,
                     "error": "拒绝保存：会话租约已失效（被接管/过期），本 worker 停止写入"}
+        # D51 Checkpoint 版本绑定：记录保存时指纹（后续修改 → submit 拒绝）
+        self.saved_checkpoint_fingerprint = current_fp
         release_ref = self.release_id  # 开发中允许 NULL（D49 外键语义修复）
         with self.db_factory() as db:
             _persist_checkpoint(
@@ -319,6 +407,16 @@ class HarnessController:
                 return {"ok": False,
                         "error": "submit 拒绝：未保存 Verified Checkpoint（"
                                  + result.get("error", "") + ")"}
+        # D51 Checkpoint 版本绑定：保存后若工作区再修改 → submit 拒绝
+        saved_fp = getattr(self, "saved_checkpoint_fingerprint", "")
+        if saved_fp and self.evaluation_fingerprint() != saved_fp:
+            return {"ok": False,
+                    "error": "submit 拒绝：Checkpoint 保存后工作区已被修改"
+                             "（Fingerprint 不匹配）——重新 evaluate_lesson 并"
+                             " save_checkpoint，或 rollback_workspace 回到检查点"}
+        # D51 Final Repair：修复提交时保存修复快照为新的 Verified 检查点
+        if self.final_phase == "repairing":
+            self._persist_repair_checkpoint()
         self.completed = True
         return {"ok": True, "taskCompleted": True,
                 "note": "任务通过独立验收并已固化；本 slice 结束"}
@@ -347,6 +445,8 @@ class HarnessController:
         self.last_feedback = dict(snapshot.get("lastEvaluation") or {})
         self.eval_fingerprint = snapshot.get("lastFingerprint") or ""
         self.checkpoint_saved = bool(snapshot.get("checkpointSaved"))
+        self.load_memory(snapshot.get("workingMemory") or {})
+        self.memory.workspace_revision = self.workspace.revision
         self.resumed = True
         return True
 
@@ -410,6 +510,99 @@ class HarnessController:
                 cleaned.append(message)
         return cleaned
 
+    def _inject_memory_system(self) -> None:
+        """把工作记忆注入 system 消息末尾（Layer 1 固定约束之上）。"""
+        if self.memory is None:
+            return
+        summary = self.memory.summary_prompt()
+        system = next((m for m in self.llm_messages
+                       if m.get("role") == "system"), None)
+        if system is None:
+            return
+        marker = "\n## 工作记忆"
+        base = system["content"].split(marker)[0]
+        system["content"] = base + marker + "（Harness 维护，可验证事实）\n" \
+            + summary.split("\n", 1)[1] if "\n" in summary else base + summary
+
+    def _compact_context(self) -> None:
+        """D51 上下文压缩：保留 system + 最近工具交互边界内的消息。
+
+        只在完整工具交互边界截断（不切断 tool_calls 配对）；压缩计数真实记录。
+        """
+        keep_tail = 16
+        system = [m for m in self.llm_messages if m.get("role") == "system"]
+        rest = [m for m in self.llm_messages if m.get("role") != "system"]
+        if len(rest) <= keep_tail:
+            return
+        tail = rest[-keep_tail:]
+        # 边界校正：tail 开头若是 tool 响应，向后丢到 assistant 边界
+        while tail and tail[0].get("role") == "tool":
+            tail.pop(0)
+        summary_note = {
+            "role": "user", "content":
+                "（上下文已压缩）此前较旧的工具交互已汇总进工作记忆。"
+                "已读取文件清单/已修改文件/已知问题见 system 工作记忆部分——"
+                "不要重复读取相同版本的文件。",
+        }
+        self.llm_messages = [*system, summary_note, *tail]
+        self.llm_messages = self._sanitize_messages(self.llm_messages)
+        if self.memory:
+            self.memory.stats["compactions"] += 1
+        self._append_timeline("context-compaction", ok=True,
+                              summary=f"上下文压缩（保留尾部 {len(tail)} 条）")
+
+    def _run_recovery(self) -> None:
+        """D51 分层恢复：1 提醒 → 2 重规划注入 → 3 上下文重置 → 停止。"""
+        self.recovery_level += 1
+        if self.memory:
+            self.memory.stats["recoveries"] += 1
+        self.memory.rounds_since_progress = 0  # 本轮重置（防每轮触发）
+        level = self.recovery_level
+        self._append_timeline("recovery", ok=True,
+                              summary=f"停滞恢复 Level {level}")
+        if level == 1:
+            self.llm_messages.append({
+                "role": "user", "content":
+                    "检测到你连续多轮没有产生有效进展（可能重复读取了相同文件）。"
+                    "请查看 system 中的工作记忆：已读取文件无需重复读取；"
+                    "直接选择能推进任务的下一步（apply_file_changes / cmake_build /"
+                    " run_ctest / evaluate_lesson）。路径参数不要加引号。"})
+        elif level == 2:
+            plan = self._build_recovery_plan()
+            self.llm_messages.append({
+                "role": "user", "content":
+                    "你已多次停滞。Harness 重新规划如下（基于真实工作记忆）：\n"
+                    + json.dumps(plan, ensure_ascii=False, indent=1)
+                    + "\n请按 firstAction 开始执行，不要再次读取已列出的文件。"})
+        else:
+            self._compact_context()
+
+    def _build_recovery_plan(self) -> dict:
+        """从 Task Spec + Working Memory + 真实 Workspace 构建恢复计划。"""
+        memory = self.memory.to_dict() if self.memory else {}
+        next_steps = []
+        if not memory.get("modifiedFiles"):
+            next_steps.append("用 apply_file_changes 创建/修改本任务核心文件")
+        next_steps.extend(["cmake_build 验证构建", "run_ctest 验证测试",
+                           "evaluate_lesson 独立评估",
+                           "save_checkpoint + submit_task"])
+        first = "apply_file_changes" if not memory.get("modifiedFiles") \
+            else "cmake_build"
+        return {
+            "reason": "stagnation-loop",
+            "taskId": self.task_spec.get("taskId", ""),
+            "goal": self.task_spec.get("title", ""),
+            "knownState": {
+                "workspaceRevision": self.workspace.revision,
+                "alreadyReadFiles": [f["path"] for f in
+                                     memory.get("inspectedFiles", [])][:10],
+                "modifiedFiles": memory.get("modifiedFiles", []),
+                "knownProblems": memory.get("knownProblems", []),
+            },
+            "nextSteps": next_steps,
+            "firstAction": first,
+        }
+
     def run(self) -> dict:
         registry = build_harness_tools(self.workspace, self)
         tools_schema = [
@@ -435,6 +628,13 @@ class HarnessController:
         ]
         # D50：恢复/中断后的消息清洗（孤儿 tool_calls 补响应）
         self.llm_messages = self._sanitize_messages(self.llm_messages)
+        # D51：兜底初始化（service 正常构建；测试直连保护）
+        if self.memory is None:
+            self.init_memory()
+        # D51：恢复时压缩旧消息（避免重新灌入几十轮重复读取历史）
+        if self.resumed and len(self.llm_messages) > 24:
+            self._compact_context()
+        self._inject_memory_system()
         budget = DEFAULT_BUDGET
         ctx = ToolContext(db=None, project_id=None)
 
@@ -460,6 +660,17 @@ class HarnessController:
                 self._append_timeline("paused", ok=False,
                                       summary="用户暂停——循环在安全边界停止")
                 break
+            # D51：停滞检测——连续 max_stagnation 轮无有效进展 → 分层恢复
+            self.memory.rounds_since_progress += 1
+            self.memory.workspace_revision = self.workspace.revision
+            if self.memory.rounds_since_progress >= self.max_stagnation:
+                self._run_recovery()
+                if self.recovery_level > self.max_recovery:
+                    self._append_timeline(
+                        "stalled", ok=False,
+                        summary=f"停滞且恢复 {self.recovery_level} 次未收敛——"
+                                "受控暂停（保存状态与诊断）")
+                    break
             self.rounds += 1
             result = self.provider.chat_with_tools(self.llm_messages, tools_schema)
             self.tokens += int(result.prompt_tokens or 0) + int(result.completion_tokens or 0)
@@ -585,7 +796,9 @@ class HarnessController:
                 "workspaceRevision": self.workspace.revision,
                 "workspace": self.workspace.to_dict(),
                 "agentMessages": self._sanitize_messages(
-                    (self.llm_messages or [])[-40:]),
+                    (self.llm_messages or [])[-24:]),
+                "workingMemory": (self.memory.to_dict()
+                                  if self.memory else None),
                 "lastEvaluation": (self.last_feedback or {}),
                 "lastFingerprint": self.eval_fingerprint,
                 "consumedTokens": self.tokens,
